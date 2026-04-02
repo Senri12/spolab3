@@ -1,0 +1,941 @@
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+        while (div > 0) {
+            digit = x / div;
+            out(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        out(x + '0');
+    }
+}
+
+void printScaled100(int value) {
+    int whole = 0;
+    int frac = 0;
+
+    whole = value / 100;
+    printInt(whole);
+    out('.');
+
+    frac = whole * 100;
+    frac = value - frac;
+    if (frac < 10) {
+        out('0');
+    }
+    printInt(frac);
+}
+
+void setupTask(int idx, int burst) {
+    setTaskArrival(idx, 0);
+    setTaskBurst(idx, burst);
+    setTaskRemaining(idx, burst);
+    setTaskState(idx, 1);
+    setTaskCompletion(idx, -1);
+    setTaskFrame(idx, 0);
+    setTaskResult(idx, 0);
+    setTaskWaitNext(idx, -1);
+    setTaskWaitValue(idx, 0);
+}
+
+void initTaskTable() {
+    setupTask(0, 8);
+    setupTask(1, 8);
+    setupTask(2, 5);
+}
+
+void initStream(int stream) {
+    setStreamHead(stream, 0);
+    setStreamTail(stream, 0);
+    setStreamCount(stream, 0);
+    setStreamClosed(stream, 0);
+    setStreamReadHead(stream, -1);
+    setStreamReadTail(stream, -1);
+    setStreamWriteHead(stream, -1);
+    setStreamWriteTail(stream, -1);
+}
+
+void initRuntime(int mode) {
+    setSchedCurrent(-1);
+    setSchedFinished(0);
+    setSchedQuantum(0);
+    setSchedQueueHead(0);
+    setSchedQueueTail(0);
+    setSchedQueueCount(0);
+    setSchedPending(-1);
+    setSchedMode(mode);
+    setSchedStepCount(0);
+    setTraceCount(0);
+    setResultCount(0);
+    setBlockedReadCount(0);
+    setBlockedWriteCount(0);
+    setSavedHostFrame(-1);
+    setSchedSyscallCode(0);
+    setSchedSyscallArg0(0);
+    setSchedSyscallArg1(0);
+    initStream(0);
+}
+
+void zeroContextFrame(int frame) {
+    int addr = 0;
+    int i = 0;
+
+    addr = frame;
+    while (i < 32) {
+        memStore(addr, 0);
+        addr = addr + 4;
+        i = i + 1;
+    }
+}
+
+void initTaskContext(int task, int entry) {
+    int top = 0;
+    int size = 0;
+    int frame = 0;
+
+    top = taskStackTop(task);
+    size = contextFrameSize();
+    frame = top - size;
+    zeroContextFrame(frame);
+    memStore(frame, entry);
+    setTaskFrame(task, frame);
+}
+
+void initTaskContexts() {
+    int entry = 0;
+
+    entry = funcAddr(producerTask);
+    initTaskContext(0, entry);
+
+    entry = funcAddr(consumerTask);
+    initTaskContext(1, entry);
+
+    entry = funcAddr(workerTask);
+    initTaskContext(2, entry);
+}
+
+void enqueueReady(int task) {
+    int tail = 0;
+    int count = 0;
+
+    tail = schedQueueTail();
+    setQueueEntry(tail, task);
+    tail = tail + 1;
+    if (tail >= 32) {
+        tail = 0;
+    }
+    setSchedQueueTail(tail);
+
+    count = schedQueueCount();
+    count = count + 1;
+    setSchedQueueCount(count);
+}
+
+int dequeueReady() {
+    int count = 0;
+    int head = 0;
+    int value = -1;
+
+    count = schedQueueCount();
+    if (count <= 0) {
+        return -1;
+    }
+
+    head = schedQueueHead();
+    value = queueEntry(head);
+    head = head + 1;
+    if (head >= 32) {
+        head = 0;
+    }
+    setSchedQueueHead(head);
+
+    count = count - 1;
+    setSchedQueueCount(count);
+    return value;
+}
+
+void seedReadyQueue() {
+    enqueueReady(0);
+    enqueueReady(1);
+    enqueueReady(2);
+}
+
+void recordTrace(int task) {
+    int idx = 0;
+
+    idx = traceCount();
+    if (idx < 64) {
+        setTraceEntry(idx, task);
+        idx = idx + 1;
+        setTraceCount(idx);
+    }
+}
+
+void recordResult(int value) {
+    int idx = 0;
+
+    idx = resultCount();
+    if (idx < 64) {
+        setResultEntry(idx, value);
+        idx = idx + 1;
+        setResultCount(idx);
+    }
+}
+
+void printTaskMark(int task) {
+    if (task == 0) {
+        out('P');
+    }
+    else {
+        if (task == 1) {
+            out('C');
+        }
+        else {
+            out('W');
+        }
+    }
+}
+
+void printTrace() {
+    int i = 0;
+    int count = 0;
+    int task = 0;
+
+    count = traceCount();
+    while (i < count) {
+        task = traceEntry(i);
+        printTaskMark(task);
+        i = i + 1;
+    }
+}
+
+void printResults() {
+    int i = 0;
+    int count = 0;
+    int value = 0;
+
+    count = resultCount();
+    while (i < count) {
+        if (i > 0) {
+            out(',');
+        }
+        value = resultEntry(i);
+        printInt(value);
+        i = i + 1;
+    }
+}
+
+void report() {
+    int i = 0;
+    int burst = 0;
+    int completion = 0;
+    int turnaround = 0;
+    int waiting = 0;
+    int sumTa = 0;
+    int sumWt = 0;
+    int scaled = 0;
+    int steps = 0;
+    int blockedR = 0;
+    int blockedW = 0;
+
+    out('T'); out('R'); out('A'); out('C'); out('E'); out('=');
+    printTrace();
+    out('\n');
+
+    out('D'); out('A'); out('T'); out('A'); out('=');
+    printResults();
+    out('\n');
+
+    steps = schedStepCount();
+    out('S'); out('T'); out('E'); out('P'); out('S'); out('=');
+    printInt(steps);
+    out('\n');
+
+    blockedR = blockedReadCount();
+    out('B'); out('L'); out('O'); out('C'); out('K'); out('_'); out('R'); out('=');
+    printInt(blockedR);
+    out('\n');
+
+    blockedW = blockedWriteCount();
+    out('B'); out('L'); out('O'); out('C'); out('K'); out('_'); out('W'); out('=');
+    printInt(blockedW);
+    out('\n');
+
+    i = 0;
+    while (i < 3) {
+        burst = taskBurst(i);
+        completion = taskCompletion(i);
+        turnaround = completion;
+        waiting = turnaround - burst;
+        sumTa = sumTa + turnaround;
+        sumWt = sumWt + waiting;
+        i = i + 1;
+    }
+
+    out('A'); out('V'); out('G'); out('_'); out('T'); out('A'); out('=');
+    scaled = sumTa * 100;
+    scaled = scaled + 1;
+    scaled = scaled / 3;
+    printScaled100(scaled);
+    out('\n');
+
+    out('A'); out('V'); out('G'); out('_'); out('W'); out('T'); out('=');
+    scaled = sumWt * 100;
+    scaled = scaled + 1;
+    scaled = scaled / 3;
+    printScaled100(scaled);
+    out('\n');
+}
+
+void makeReady(int task) {
+    int mode = 0;
+
+    if (task < 0) {
+        return;
+    }
+
+    setTaskState(task, 1);
+    mode = schedMode();
+    if (mode == 0) {
+        enqueueReady(task);
+    }
+}
+
+void accountSyscall(int task) {
+    int rem = 0;
+    int steps = 0;
+
+    rem = taskRemaining(task);
+    if (rem > 0) {
+        rem = rem - 1;
+        setTaskRemaining(task, rem);
+    }
+
+    steps = schedStepCount();
+    steps = steps + 1;
+    setSchedStepCount(steps);
+}
+
+void rescheduleTask(int task) {
+    int mode = 0;
+    int quantum = 0;
+
+    mode = schedMode();
+    if (mode == 0) {
+        quantum = schedQuantum();
+        quantum = quantum + 1;
+        setSchedQuantum(quantum);
+
+        if (quantum < 2) {
+            setTaskState(task, 2);
+            setSchedCurrent(task);
+        }
+        else {
+            setTaskState(task, 1);
+            enqueueReady(task);
+            setSchedCurrent(-1);
+            setSchedQuantum(0);
+        }
+    }
+    else {
+        setTaskState(task, 1);
+        setSchedCurrent(-1);
+        setSchedQuantum(0);
+    }
+}
+
+void blockCurrent(int task) {
+    setTaskState(task, 4);
+    setSchedCurrent(-1);
+    setSchedQuantum(0);
+}
+
+void finishTask(int task) {
+    int finished = 0;
+    int steps = 0;
+
+    setTaskState(task, 3);
+    steps = schedStepCount();
+    setTaskCompletion(task, steps);
+
+    finished = schedFinished();
+    finished = finished + 1;
+    setSchedFinished(finished);
+    setSchedCurrent(-1);
+    setSchedQuantum(0);
+}
+
+int streamBufferIndex(int stream, int slot) {
+    int idx = 0;
+
+    idx = stream * 2;
+    idx = idx + slot;
+    return idx;
+}
+
+void pushStreamValue(int stream, int value) {
+    int tail = 0;
+    int count = 0;
+    int idx = 0;
+
+    tail = streamTail(stream);
+    idx = streamBufferIndex(stream, tail);
+    setStreamBufferEntry(idx, value);
+
+    tail = tail + 1;
+    if (tail >= 2) {
+        tail = 0;
+    }
+    setStreamTail(stream, tail);
+
+    count = streamCount(stream);
+    count = count + 1;
+    setStreamCount(stream, count);
+}
+
+int popStreamValue(int stream) {
+    int head = 0;
+    int count = 0;
+    int idx = 0;
+    int value = 0;
+
+    head = streamHead(stream);
+    idx = streamBufferIndex(stream, head);
+    value = streamBufferEntry(idx);
+
+    head = head + 1;
+    if (head >= 2) {
+        head = 0;
+    }
+    setStreamHead(stream, head);
+
+    count = streamCount(stream);
+    count = count - 1;
+    setStreamCount(stream, count);
+
+    return value;
+}
+
+void enqueueReadWait(int stream, int task) {
+    int head = 0;
+    int tail = 0;
+
+    head = streamReadHead(stream);
+    tail = streamReadTail(stream);
+    setTaskWaitNext(task, -1);
+
+    if (head < 0) {
+        setStreamReadHead(stream, task);
+        setStreamReadTail(stream, task);
+    }
+    else {
+        setTaskWaitNext(tail, task);
+        setStreamReadTail(stream, task);
+    }
+}
+
+int dequeueReadWait(int stream) {
+    int head = 0;
+    int next = 0;
+
+    head = streamReadHead(stream);
+    if (head < 0) {
+        return -1;
+    }
+
+    next = taskWaitNext(head);
+    setStreamReadHead(stream, next);
+    if (next < 0) {
+        setStreamReadTail(stream, -1);
+    }
+    setTaskWaitNext(head, -1);
+    return head;
+}
+
+void enqueueWriteWait(int stream, int task) {
+    int head = 0;
+    int tail = 0;
+
+    head = streamWriteHead(stream);
+    tail = streamWriteTail(stream);
+    setTaskWaitNext(task, -1);
+
+    if (head < 0) {
+        setStreamWriteHead(stream, task);
+        setStreamWriteTail(stream, task);
+    }
+    else {
+        setTaskWaitNext(tail, task);
+        setStreamWriteTail(stream, task);
+    }
+}
+
+int dequeueWriteWait(int stream) {
+    int head = 0;
+    int next = 0;
+
+    head = streamWriteHead(stream);
+    if (head < 0) {
+        return -1;
+    }
+
+    next = taskWaitNext(head);
+    setStreamWriteHead(stream, next);
+    if (next < 0) {
+        setStreamWriteTail(stream, -1);
+    }
+    setTaskWaitNext(head, -1);
+    return head;
+}
+
+void wakeBlockedReadersWithClose(int stream) {
+    int reader = 0;
+
+    reader = dequeueReadWait(stream);
+    while (reader >= 0) {
+        setTaskResult(reader, -1);
+        makeReady(reader);
+        reader = dequeueReadWait(stream);
+    }
+}
+
+void resumeOneBlockedWriter(int stream) {
+    int writer = 0;
+    int value = 0;
+    int count = 0;
+    int reader = 0;
+
+    writer = dequeueWriteWait(stream);
+    if (writer < 0) {
+        return;
+    }
+
+    value = taskWaitValue(writer);
+    count = streamCount(stream);
+
+    if (count == 0) {
+        reader = dequeueReadWait(stream);
+        if (reader >= 0) {
+            setTaskResult(reader, value);
+            makeReady(reader);
+            makeReady(writer);
+            return;
+        }
+    }
+
+    if (count < 2) {
+        pushStreamValue(stream, value);
+        makeReady(writer);
+    }
+}
+
+void handleYieldSyscall(int task) {
+    rescheduleTask(task);
+}
+
+void handleWriteSyscall(int task) {
+    int stream = 0;
+    int value = 0;
+    int count = 0;
+    int reader = 0;
+    int blocked = 0;
+
+    stream = schedSyscallArg0();
+    value = schedSyscallArg1();
+    count = streamCount(stream);
+
+    if (count == 0) {
+        reader = dequeueReadWait(stream);
+        if (reader >= 0) {
+            setTaskResult(reader, value);
+            makeReady(reader);
+            rescheduleTask(task);
+            return;
+        }
+    }
+
+    if (count < 2) {
+        pushStreamValue(stream, value);
+        rescheduleTask(task);
+        return;
+    }
+
+    setTaskWaitValue(task, value);
+    enqueueWriteWait(stream, task);
+    blocked = blockedWriteCount();
+    blocked = blocked + 1;
+    setBlockedWriteCount(blocked);
+    blockCurrent(task);
+}
+
+void handleReadSyscall(int task) {
+    int stream = 0;
+    int count = 0;
+    int value = 0;
+    int blocked = 0;
+    int closed = 0;
+
+    stream = schedSyscallArg0();
+    count = streamCount(stream);
+
+    if (count > 0) {
+        value = popStreamValue(stream);
+        setTaskResult(task, value);
+        count = streamCount(stream);
+        if (count < 2) {
+            resumeOneBlockedWriter(stream);
+        }
+        rescheduleTask(task);
+        return;
+    }
+
+    closed = streamClosed(stream);
+    if (closed != 0) {
+        setTaskResult(task, -1);
+        rescheduleTask(task);
+        return;
+    }
+
+    enqueueReadWait(stream, task);
+    blocked = blockedReadCount();
+    blocked = blocked + 1;
+    setBlockedReadCount(blocked);
+    blockCurrent(task);
+}
+
+void handleCloseSyscall(int task) {
+    int stream = 0;
+
+    stream = schedSyscallArg0();
+    setStreamClosed(stream, 1);
+    wakeBlockedReadersWithClose(stream);
+    rescheduleTask(task);
+}
+
+void handleExitSyscall(int task) {
+    finishTask(task);
+}
+
+void handleCurrentTrap() {
+    int task = 0;
+    int code = 0;
+
+    task = schedCurrent();
+    if (task < 0) {
+        return;
+    }
+
+    accountSyscall(task);
+    code = schedSyscallCode();
+
+    if (code == 1) {
+        handleYieldSyscall(task);
+        return;
+    }
+
+    if (code == 2) {
+        handleWriteSyscall(task);
+        return;
+    }
+
+    if (code == 3) {
+        handleReadSyscall(task);
+        return;
+    }
+
+    if (code == 4) {
+        handleCloseSyscall(task);
+        return;
+    }
+
+    if (code == 5) {
+        handleExitSyscall(task);
+        return;
+    }
+
+    rescheduleTask(task);
+}
+
+int pickRR() {
+    int current = 0;
+    int state = 0;
+    int next = -1;
+
+    current = schedCurrent();
+    if (current >= 0) {
+        state = taskState(current);
+        if (state == 2) {
+            return current;
+        }
+    }
+
+    next = dequeueReady();
+    return next;
+}
+
+int pickSRT() {
+    int best = -1;
+    int bestRem = 9999;
+    int i = 0;
+    int rem = 0;
+    int state = 0;
+
+    i = 0;
+    while (i < 3) {
+        state = taskState(i);
+        if (state == 1) {
+            rem = taskRemaining(i);
+            if (rem < bestRem) {
+                bestRem = rem;
+                best = i;
+            }
+        }
+        i = i + 1;
+    }
+
+    return best;
+}
+
+int pickNextTask() {
+    int mode = 0;
+    int next = -1;
+
+    mode = schedMode();
+    if (mode == 0) {
+        next = pickRR();
+        return next;
+    }
+
+    next = pickSRT();
+    return next;
+}
+
+void captureHostFrameIfNeeded() {
+    int saved = 0;
+    int frame = 0;
+
+    saved = savedHostFrame();
+    if (saved >= 0) {
+        return;
+    }
+
+    frame = irqFrameSp();
+    setSavedHostFrame(frame);
+}
+
+void saveRunningTaskFrame() {
+    int current = 0;
+    int frame = 0;
+
+    current = schedCurrent();
+    if (current < 0) {
+        return;
+    }
+
+    frame = irqFrameSp();
+    setTaskFrame(current, frame);
+}
+
+int allTasksDone() {
+    int finished = 0;
+
+    finished = schedFinished();
+    if (finished >= 3) {
+        return 1;
+    }
+    return 0;
+}
+
+void prepareNextTask() {
+    int next = -1;
+
+    next = pickNextTask();
+    setSchedCurrent(next);
+    if (next >= 0) {
+        setTaskState(next, 2);
+    }
+}
+
+int hasCurrentTask() {
+    int current = 0;
+
+    current = schedCurrent();
+    if (current >= 0) {
+        return 1;
+    }
+    return 0;
+}
+
+void recordCurrentTrace() {
+    int current = 0;
+
+    current = schedCurrent();
+    if (current >= 0) {
+        recordTrace(current);
+    }
+}
+
+void printDeadlockLine() {
+    out('D'); out('E'); out('A'); out('D'); out('L'); out('O'); out('C'); out('K');
+    out('\n');
+}
+
+void kernelStep() {
+    int frame = 0;
+    int current = 0;
+    int finished = 0;
+
+    captureHostFrameIfNeeded();
+    saveRunningTaskFrame();
+    handleCurrentTrap();
+
+    finished = schedFinished();
+    if (finished >= 3) {
+        frame = savedHostFrame();
+        setSchedCurrent(-1);
+        setSchedPending(frame);
+        report();
+        return;
+    }
+
+    prepareNextTask();
+    current = schedCurrent();
+    if (current < 0) {
+        frame = savedHostFrame();
+        setSchedCurrent(-1);
+        setSchedPending(frame);
+        printDeadlockLine();
+        return;
+    }
+
+    recordCurrentTrace();
+    frame = taskFrame(current);
+    setSchedPending(frame);
+}
+
+void taskYieldSys() {
+    setSchedSyscallCode(1);
+    vmTrap();
+}
+
+void streamWriteSys(int stream, int value) {
+    setSchedSyscallCode(2);
+    setSchedSyscallArg0(stream);
+    setSchedSyscallArg1(value);
+    vmTrap();
+}
+
+int streamReadSys(int self, int stream) {
+    int value = 0;
+
+    setSchedSyscallCode(3);
+    setSchedSyscallArg0(stream);
+    vmTrap();
+    value = taskResult(self);
+    return value;
+}
+
+void streamCloseSys(int stream) {
+    setSchedSyscallCode(4);
+    setSchedSyscallArg0(stream);
+    vmTrap();
+}
+
+void taskExitSys() {
+    while (1) {
+        setSchedSyscallCode(5);
+        vmTrap();
+    }
+}
+
+void producerTask() {
+    int value = 1;
+
+    while (value <= 6) {
+        streamWriteSys(0, value);
+        value = value + 1;
+    }
+
+    streamCloseSys(0);
+    taskExitSys();
+}
+
+void consumerTask() {
+    int value = 0;
+
+    while (1) {
+        value = streamReadSys(1, 0);
+        if (value < 0) {
+            break;
+        }
+        recordResult(value);
+    }
+
+    taskExitSys();
+}
+
+void workerTask() {
+    int counter = 0;
+
+    while (counter < 4) {
+        counter = counter + 1;
+        taskYieldSys();
+    }
+
+    taskExitSys();
+}
+
+void irq_handler() {
+    enterKernelStack();
+    kernelStep();
+    restorePendingSp();
+    vmIret();
+}
+
+void printHeaderRR2() {
+    out('A'); out('L'); out('G'); out('='); out('R'); out('R'); out('2'); out('\n');
+}
+
+void printHeaderSRT() {
+    out('A'); out('L'); out('G'); out('='); out('S'); out('R'); out('T'); out('\n');
+}
+
+void runScheduler(int mode) {
+    int handler = 0;
+
+    initRuntime(mode);
+    initTaskTable();
+    initTaskContexts();
+
+    if (mode == 0) {
+        seedReadyQueue();
+        printHeaderRR2();
+    }
+    else {
+        printHeaderSRT();
+    }
+
+    handler = funcAddr(irq_handler);
+    setIrqHandler(handler);
+    setIrqEnable(0);
+    setTimerPeriod(0);
+    vmTrap();
+}
+
+int main() {
+    runScheduler(0);
+    out('\n');
+    runScheduler(1);
+    return 0;
+}

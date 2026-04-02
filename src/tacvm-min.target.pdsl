@@ -1,0 +1,19 @@
+architecture TacVmMin {
+    registers:
+        storage r0[32];
+        storage ip[32];
+
+    memory:
+        range ram [0x00000000..0xFFFFFFFF] {
+            cell = 8;
+            endianess = little-endian;
+            granularity = 0;
+        }
+
+    instructions:
+        instruction nop = { 0000 0000 } {
+        };
+
+    mnemonics:
+        mnemonic nop();
+}

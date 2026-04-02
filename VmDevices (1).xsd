@@ -1,0 +1,166 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<xs:schema id="Portable.TargetPlatform.Vm.Devices"
+    targetNamespace="Portable.TargetPlatform.Vm.Devices"
+    elementFormDefault="qualified"
+    xmlns="Portable.TargetPlatform.Vm.Devices"
+    xmlns:mstns="Portable.TargetPlatform.Vm.Devices"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:element name="VmDevicesConfiguration" type="VmDevicesConfigurationType" />
+
+  <xs:complexType name="VmDevicesConfigurationType">
+    <xs:sequence>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="DeviceType" type="VmDeviceTypeConfigurationType" />
+        <xs:element name="Device" type="VmDeviceConfigurationType" />
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="VmDevicesConfigurationPartType" abstract="true">
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceTypeConfigurationType">
+    <xs:complexContent>
+      <xs:extension base="VmDevicesConfigurationPartType">
+        <xs:attribute name="Name" type="string" use="optional" />
+        <xs:attribute name="Id" type="int" use="required" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceConfigurationType">
+    <xs:complexContent>
+      <xs:extension base="VmDevicesConfigurationPartType">
+        <xs:sequence>
+          <xs:choice minOccurs="0" maxOccurs="unbounded" >
+            <xs:element name="IoPortMap" type="VmDeviceIoPortMapType" />
+            <xs:element name="Signal" type="VmDeviceIoSignalType" />
+            <xs:element name="Parameter" type="VmDeviceParameterType" />
+          </xs:choice>
+        </xs:sequence>
+        <xs:attribute name="DeviceType" type="string" use="required" />
+        <xs:attribute name="Name" type="string" use="optional" />
+        <xs:attribute name="Id" type="int" use="required" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceConfigurationPartType" abstract="true">
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceIoPortMapType" >
+    <xs:complexContent>
+      <xs:extension base="VmDeviceConfigurationPartType">
+        <xs:sequence>
+          <xs:choice minOccurs="0" maxOccurs="1">
+            <xs:element name="InitialBinding" type="VmDeviceIoMapInitialBindingType"  />
+            <xs:element name="RelativeBinding" type="VmDeviceIoMapRelativeBindingType" />
+          </xs:choice>
+        </xs:sequence>
+        <xs:attribute name="PortType" type="string" use="required" />
+        <xs:attribute name="Id" type="int" use="required" />
+        <xs:attribute name="BankName" type="string" use="required" />
+        <xs:attribute name="Mode" type="VmDeviceIoPortMapModeType" use="required" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:simpleType name="VmDeviceIoPortMapModeType">
+    <xs:restriction base="string">
+      <xs:enumeration value="Linear" />
+      <xs:enumeration value="RAM" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="VmDeviceIoMapBindingBaseType" abstract="true">
+    
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceIoMapInitialBindingType">
+    <xs:complexContent>
+      <xs:extension base="mstns:VmDeviceIoMapBindingBaseType">
+        <xs:attribute name="StartAddress" type="string" use="required" />
+        <xs:attribute name="Length" type="string" use="optional" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceIoMapRelativeBindingType">
+    <xs:complexContent>
+      <xs:extension base="mstns:VmDeviceIoMapBindingBaseType">
+        <xs:attribute name="BaseOfType" type="string" use="required" />
+        <xs:attribute name="Offset" type="string" use="optional" />
+        <xs:attribute name="Length" type="string" use="optional" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceIoSignalType">
+    <xs:complexContent>
+      <xs:extension base="VmDeviceConfigurationPartType">
+        <xs:attribute name="Name" type="string" use="required" />
+        <xs:attribute name="Id" type="int" use="required" />
+        <xs:attribute name="Interrupt" type="int" use="optional" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VmDeviceParameterType" mixed="true">
+    <xs:complexContent>
+      <xs:extension base="VmDeviceConfigurationPartType">
+        <xs:attribute name="Name" type="string" use="required" />
+        <xs:attribute name="Value" type="string" use="optional" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <!-- Region common base types -->
+
+  <xs:simpleType name="bool">
+    <xs:restriction base="xs:boolean" />
+  </xs:simpleType>
+
+  <xs:simpleType name="string">
+    <xs:restriction base="xs:string" />
+  </xs:simpleType>
+
+  <xs:simpleType name="HexByte">
+    <xs:restriction base="xs:string" >
+      <xs:pattern value="[0-9A-Fa-f][0-9A-Fa-f]" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="bits">
+    <xs:restriction base="xs:string" >
+      <xs:pattern value="[01 ]+" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="int">
+    <xs:restriction base="xs:int" />
+  </xs:simpleType>
+
+  <xs:simpleType name="ulong">
+    <xs:restriction base="xs:unsignedLong" />
+  </xs:simpleType>
+
+  <xs:complexType name="StringsList">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="Item" type="string" />
+    </xs:choice>
+  </xs:complexType>
+
+  <xs:simpleType name="HexBytes">
+    <xs:list itemType="HexByte" />
+  </xs:simpleType >
+
+  <xs:simpleType name="GuidString">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})|(\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\})"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- EndRegion -->
+
+</xs:schema>

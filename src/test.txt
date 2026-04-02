@@ -1,0 +1,108 @@
+void printInt(int x) {
+    if (x < 0) {
+        out('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        int prefix = x / 10;
+        printInt(prefix);
+    }
+
+    int q = x / 10;
+    q = q * 10;
+    int digit = x - q;
+    out(digit + '0');
+}
+
+void print(int arg) {
+    printInt(arg);
+    out('\n');
+    return;
+}
+
+int readToken() {
+    while (1) {
+        int ch = in();
+
+        if (ch == 0) {
+            return 0;
+        }
+
+        if (ch == 10) {
+            continue;
+        }
+
+        if (ch == 13) {
+            continue;
+        }
+
+        if (ch == 32) {
+            continue;
+        }
+
+        if (ch == 9) {
+            continue;
+        }
+
+        return ch;
+    }
+}
+
+int main() {
+    while (1) {
+        out('>');
+
+        int op = readToken();
+        if (op == 0) {
+            return 0;
+        }
+
+        int a = readToken();
+        int b = readToken();
+        if (a == 0) {
+            return 0;
+        }
+        if (b == 0) {
+            return 0;
+        }
+
+        a = a - '0';
+        b = b - '0';
+
+        if (op == '+') {
+            int tmp = a + b;
+            print(tmp);
+            continue;
+        }
+
+        if (op == '-') {
+            int tmp = a - b;
+            print(tmp);
+            continue;
+        }
+
+        if (op == '*') {
+            int tmp = a * b;
+            print(tmp);
+            continue;
+        }
+
+        if (op == '/') {
+            if (b == 0) {
+                out('E');
+                out('r');
+                out('r');
+                out('\n');
+                continue;
+            }
+
+            int tmp = a / b;
+            print(tmp);
+            continue;
+        }
+
+        out('?');
+        out('\n');
+    }
+}

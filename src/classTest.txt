@@ -1,0 +1,97 @@
+class Pair<T> {
+    T left;
+    T right;
+
+    set(T a, T b) {
+        left = a;
+        right = b;
+    }
+
+    T sum() {
+        return left + right;
+    }
+}
+
+class Point : Pair<int> {
+    int bias;
+
+    setBias(int value) {
+        bias = value;
+    }
+
+    int sum(int delta) {
+        int base = left + right;
+        return base + delta;
+    }
+
+    int sumWithBias() {
+        int base = left + right;
+        return base + bias;
+    }
+}
+
+void print(int arg) {
+        out(arg);
+        out('\n');
+        return;
+}
+
+
+void printInt(int x) {
+    if(x>10){
+        int div = 1;
+        int t = x;
+
+
+        while (t >= 10) {    
+            t = x / div;
+            div = div * 10; 
+        } 
+        div = div / 10;
+        while (div > 0) {
+            int digit = x / div;
+            out(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else
+    {
+        out(x + '0');
+    }
+    
+    
+}
+
+void printLine(char tag, int value) {
+    out(tag);
+    out('=');
+    printInt(value);
+    out('\n');
+}
+
+int main() {
+    Pair<int> pair;
+    pair.set(1, 2);
+    int p0 = pair.sum();
+
+    Point a;
+    a.set(20, 3);
+    a.setBias(1);
+    int a0 = a.sum();
+    int a1 = a.sum(4);
+    int a2 = a.sumWithBias();
+
+    Point b;
+    b.set(4, 1);
+    b.setBias(2);
+    int b0 = b.sumWithBias();
+
+    printLine('P', p0);
+    printLine('A', a0);
+    printLine('B', a1);
+    printLine('C', a2);
+    printLine('D', b0);
+
+    return 0;
+}

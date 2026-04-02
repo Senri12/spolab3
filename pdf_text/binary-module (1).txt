@@ -1,0 +1,81 @@
+Формат бинарных модулей
+Бинарный модуль представляет собой заголовок, описывающий структуру файла и последующие
+за ним 7 таблиц данных различного рода: таблица секций, таблица символов, таблицы для
+отображения частей бинарного модуля на исходный код, таблица байтовых массивов и таблица
+строк. Ссылки между данными заголовков и таблиц задаются индексами.
+
+Смещени    Описание             Структура
+е
+0h         moduleHeader         Одна запись заголовка файла
+
+                                 0h         signature   08 00 00 00
+                                 4h                     50 2E 54 50 2E 54 42 2E
+                                 Ch         int32 formatVersion;
+                                 10h        int32 platformNameIndex;
+                                 14h        int32 platformVersion;
+                                 18h        int64 entryPoint;
+
+
+
+20h        tablesHeader         Одна запись с количеством записей таблиц
+
+                                 0h         int32 sectionsCount;
+                                 4h         int32 symbolsCount;
+                                 8h         int32 sourceFilesCount;
+                                 12h        int32 sourceTextRangesCount;
+                                 16h        int32 sourceCodePointsCount;
+                                 20h        int32 blobsCount;
+                                 24h        int32 stringsCount;
+
+
+
+3Ch        sections             sectionsCount записей вида
+
+                                            int32 blobIndex;
+                                            int32 bankNameIndex;
+                                            int64 startAddress;
+                                            int16 kind;
+                                            int32 customSectionNameIndex;
+                                            int16 accessMode;
+
+
+
+…          symbols              symbolsCount записей вида
+
+                                            int32 sectionIndex;
+                                            int64 address;
+                                            int32 nameIndex;
+
+
+
+…          sourceFiles          sourceFilesCount записей вида
+
+                                            int32 fileNameIndex;
+                                            int32 sha256hashBytesIndex;
+…   sourceTextRanges   sourceTextRangesCount записей вида
+
+                                 int32 sourceFileIndex;
+                                 int32 position;
+                                 int32 length;
+                                 int32 line;
+                                 int32 column;
+
+
+
+…   sourceCodePoints   sourceCodePointsCount записей вида
+
+                                 int64 address;
+                                 Int32 sectionIndex;
+                                 int32 sourceOperationRangeIndex;
+
+
+
+…   blobs              blobsCount длин последующих байтовых
+                       последовательностей, каждая – 4-байтовое целое;
+                       blobsCount байтовых последовательностей соответствующей
+                       длины
+
+…   strings            stringsCount записей вида
+
+                                 int32 strLength;
+                                 byte str[strLength];

@@ -1,0 +1,97 @@
+%YAML 1.2
+---
+
+file_extensions:
+  - target.pdsl
+scope: source.arh
+
+variables:
+  nums: '(\b((0(x|X)[0-9a-fA-F]*(\.[0-9a-fA-F]+p-?\d+)?)|(([0-9]+\.?[0-9]*)|(\.[0-9]+))((e|E)(\+|-)?[0-9]+)?)([fF]|(l{1,2}|L{1,2})[uU]?|[uU](l{0,2}|L{0,2}))?\b)'
+  defenition_words: '\b(view|storage|range|instruction|format|encode|mnemonic)\b'
+
+contexts:
+  main:
+    - include: operators
+    - include: keywords
+    - include: comments
+
+    - match: '"'
+      scope: punctuation.definition.string.begin.arh
+      push: double_quoted_string
+
+    - match: '{{nums}}'
+      scope: constant.numeric.arh
+
+  keywords:
+    - include: instruction_keywords
+
+    - match: '\b(if|else|then)\b'
+      scope: keyword.control.conditional.arh
+
+    - match: '\b(do|while|break)\b'
+      scope: keyword.control.loop.arh
+
+    - match: '\b(let)\b'
+      scope: keyword.operator.assignment.arh
+
+    - match: '\b(architecture|memory|stacks|instructions|mnemonics|registers|stacks)\b'
+      scope: keyword.control.arh
+    - match: '{{defenition_words}}'
+      scope: storage.type.arh
+
+    - match: '\b(as|is|of|for)\b'
+      scope: keyword.operator.word.arh
+
+
+    - match: '\.\.\.?'
+      scope: keyword.operator.arh
+
+    - match: '\b(cell|endianess|granularity)\b'
+      scope: entity.name.enum.arh
+
+  instruction_keywords:
+    - match: '\b(sequence|field)\b'
+      scope: storage.modifier.arh 
+
+    - match: '\balternatives\b'
+      scope: variable.language.arh
+
+  comments: 
+    - match: '//'
+      scope: punctuation.definition.comment.arh
+      push: line_comment
+
+    - match: '\/\*'
+      scope: punctuation.definition.comment.arh
+      push: block_comment
+  
+  operators:
+    - match: \+\=|-\=|\*\=|/\=|%\=|&\=|\|\=|\^\=|>>\=|<<\=
+      scope: keyword.operator.assignment.augmented.c
+
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.arh
+    - match: '\\.'
+      scope: constant.character.escape.arh
+    - match: '\{'
+      scope: punctuation.section.brackets.arh
+      push: placeholder
+    - match: '"'
+      scope: punctuation.definition.string.end.arh
+      pop: true
+
+  placeholder:
+    - meta_scope: constant.other.placeholder
+    - match: '\}'
+      pop: true
+
+  line_comment:
+    - meta_scope: comment.line.arh
+    - match: $
+      pop: true
+
+  block_comment:
+    - meta_scope: comment.block.arh
+    - match: '\*\/'
+      pop: true

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VmDevicesConfiguration xmlns="Portable.TargetPlatform.Vm.Devices">
+  <DeviceType Name="SimplePipe" Id="0" />
+  <Device DeviceType="SimplePipe" Name="vm0device" Id="0">
+    <IoPortMap PortType="control" Id="0" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="1000032" Length="80" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="stdio" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+</VmDevicesConfiguration>

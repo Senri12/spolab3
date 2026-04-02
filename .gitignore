@@ -1,0 +1,41 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Local native build artifacts
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Generated callgraph / temp output
+/cfg_callgraph*.dgml
+/cfg_callgraph*.ext
+/out/
+
+# Generated top-level build outputs
+/build/*.asm
+/build/*.dgml
+/build/*.ptptb
+/build/*.sym
+/build/*.stdin.txt
+/build/*.stdout.txt
+/build/*.stderr.txt
+/build/*.input.txt
+
+# Generated helper directories
+/build/rt/
+/build/src/
+
+# Reference dumps / examples
+/build/reference/

@@ -1,0 +1,16 @@
+int main() {
+    out('B');
+    out('E');
+    out('G');
+    out('I');
+    out('N');
+    out('\n');
+    int c = in();
+    out('G');
+    out('O');
+    out('T');
+    out('=');
+    out(c);
+    out('\n');
+    return 0;
+}

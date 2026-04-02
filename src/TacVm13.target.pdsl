@@ -1,0 +1,693 @@
+architecture TacVm13 {
+    registers:
+        storage R0[32];
+        view r0 = R0;
+        storage R1[32];
+        view r1 = R1;
+        storage R2[32];
+        view r2 = R2;
+        storage R3[32];
+        view r3 = R3;
+        storage R4[32];
+        view r4 = R4;
+        storage R5[32];
+        view r5 = R5;
+        storage R6[32];
+        view r6 = R6;
+        storage R7[32];
+        view r7 = R7;
+        storage R8[32];
+        view r8 = R8;
+        storage R9[32];
+        view r9 = R9;
+        storage R10[32];
+        view r10 = R10;
+        storage R11[32];
+        view r11 = R11;
+        storage R12[32];
+        view r12 = R12;
+        storage R13[32];
+        view r13 = R13;
+        storage R14[32];
+        view r14 = R14;
+        storage R15[32];
+        view r15 = R15;
+        storage R16[32];
+        view r16 = R16;
+        storage R17[32];
+        view r17 = R17;
+        storage R18[32];
+        view r18 = R18;
+        storage R19[32];
+        view r19 = R19;
+        storage R20[32];
+        view r20 = R20;
+        storage R21[32];
+        view r21 = R21;
+        storage R22[32];
+        view r22 = R22;
+        storage R23[32];
+        view r23 = R23;
+        storage R24[32];
+        view r24 = R24;
+        storage R25[32];
+        view r25 = R25;
+        storage R26[32];
+        view r26 = R26;
+        storage R27[32];
+        view r27 = R27;
+        storage R28[32];
+        view r28 = R28;
+        storage R29[32];
+        view fp = R29;
+        storage R30[32];
+        view sp = R30;
+        storage R31[32];
+        view r31 = R31;
+
+        storage ip[32];
+        storage cmp_result[32];
+        storage INPUT[8];
+        storage OUTPUT[8];
+
+    memory:
+        range ram [0x00000000..0x000FFFFF] {
+            cell = 8;
+            endianess = little-endian;
+            granularity = 1;
+        }
+
+    instructions:
+        encode reg field = register {
+            r0 = 00000,
+            r1 = 00001,
+            r2 = 00010,
+            r3 = 00011,
+            r4 = 00100,
+            r5 = 00101,
+            r6 = 00110,
+            r7 = 00111,
+            r8 = 01000,
+            r9 = 01001,
+            r10 = 01010,
+            r11 = 01011,
+            r12 = 01100,
+            r13 = 01101,
+            r14 = 01110,
+            r15 = 01111,
+            r16 = 10000,
+            r17 = 10001,
+            r18 = 10010,
+            r19 = 10011,
+            r20 = 10100,
+            r21 = 10101,
+            r22 = 10110,
+            r23 = 10111,
+            r24 = 11000,
+            r25 = 11001,
+            r26 = 11010,
+            r27 = 11011,
+            r28 = 11100,
+            fp = 11101,
+            sp = 11110,
+            r31 = 11111
+        };
+
+        encode imm32 field = immediate[32] data;
+        encode addr20 field = immediate[20] data;
+        encode label32 field = immediate[32] data;
+        encode off16 field = immediate[16] displacement;
+
+        instruction nop = {
+            0000 0000,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+        } {
+            ip = ip + 8;
+        };
+
+        instruction mov_rr = {
+            0000 0001,
+            reg as dst,
+            reg as src,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            dst = src;
+            ip = ip + 8;
+        };
+
+        instruction mov_ri = {
+            0000 0010,
+            reg as dst,
+            0000 0000 0000 0000 000,
+            imm32 as value
+        } {
+            dst = value;
+            ip = ip + 8;
+        };
+
+        instruction mov_rl = {
+            0000 0011,
+            reg as dst,
+            0000 0000 0000 0000 000,
+            label32 as value
+        } {
+            dst = value;
+            ip = ip + 8;
+        };
+
+        instruction mov_rm = {
+            0000 0100,
+            reg as dst,
+            reg as base,
+            off16 as off,
+            0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            dst = ram:4[address];
+            ip = ip + 8;
+        };
+
+        instruction mov_ra = {
+            0000 0101,
+            reg as dst,
+            0000 0000 0000 0000 0000 0000 0000 000,
+            addr20 as address
+        } {
+            dst = ram:4[address];
+            ip = ip + 8;
+        };
+
+        instruction mov_mr = {
+            0000 0110,
+            reg as base,
+            reg as src,
+            off16 as off,
+            0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            ram:4[address] = src;
+            ip = ip + 8;
+        };
+
+        instruction mov_mi = {
+            0000 0111,
+            reg as base,
+            off16 as off,
+            000,
+            imm32 as value
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            ram:4[address] = value;
+            ip = ip + 8;
+        };
+
+        instruction mov_ar = {
+            0000 1000,
+            reg as src,
+            0000 0000 0000 0000 0000 0000 0000 000,
+            addr20 as address
+        } {
+            ram:4[address] = src;
+            ip = ip + 8;
+        };
+
+        instruction mov_ai = {
+            0000 1001,
+            addr20 as address,
+            0000,
+            imm32 as value
+        } {
+            ram:4[address] = value;
+            ip = ip + 8;
+        };
+
+        instruction mov_al = {
+            0000 1010,
+            addr20 as address,
+            0000,
+            label32 as value
+        } {
+            ram:4[address] = value;
+            ip = ip + 8;
+        };
+
+        instruction push_r = {
+            0001 0000,
+            reg as src,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 000
+        } {
+            let address = sp - 4;
+            sp = address;
+            ram:4[address] = src;
+            ip = ip + 8;
+        };
+
+        instruction pop_r = {
+            0001 0001,
+            reg as dst,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 000
+        } {
+            let address = sp;
+            dst = ram:4[address];
+            sp = address + 4;
+            ip = ip + 8;
+        };
+
+        instruction add_rrr = {
+            0010 0000,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs + rhs;
+            ip = ip + 8;
+        };
+
+        instruction add_rri = {
+            0010 0001,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs + rhs;
+            ip = ip + 8;
+        };
+
+        instruction sub_rrr = {
+            0010 0010,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs - rhs;
+            ip = ip + 8;
+        };
+
+        instruction sub_rri = {
+            0010 0011,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs - rhs;
+            ip = ip + 8;
+        };
+
+        instruction mul_rrr = {
+            0010 0100,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs * rhs;
+            ip = ip + 8;
+        };
+
+        instruction mul_rri = {
+            0010 0101,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs * rhs;
+            ip = ip + 8;
+        };
+
+        instruction div_rrr = {
+            0010 0110,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs / rhs;
+            ip = ip + 8;
+        };
+
+        instruction div_rri = {
+            0010 0111,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs / rhs;
+            ip = ip + 8;
+        };
+
+        instruction and_rrr = {
+            0010 1000,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs & rhs;
+            ip = ip + 8;
+        };
+
+        instruction and_rri = {
+            0010 1001,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs & rhs;
+            ip = ip + 8;
+        };
+
+        instruction or_rrr = {
+            0010 1010,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs | rhs;
+            ip = ip + 8;
+        };
+
+        instruction or_rri = {
+            0010 1011,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs | rhs;
+            ip = ip + 8;
+        };
+
+        instruction xor_rrr = {
+            0010 1100,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs ^ rhs;
+            ip = ip + 8;
+        };
+
+        instruction xor_rri = {
+            0010 1101,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs ^ rhs;
+            ip = ip + 8;
+        };
+
+        instruction shl_rrr = {
+            0010 1110,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs << rhs;
+            ip = ip + 8;
+        };
+
+        instruction shl_rri = {
+            0010 1111,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs << rhs;
+            ip = ip + 8;
+        };
+
+        instruction shr_rrr = {
+            0011 0000,
+            reg as dst,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0
+        } {
+            dst = lhs >> rhs;
+            ip = ip + 8;
+        };
+
+        instruction shr_rri = {
+            0011 0001,
+            reg as dst,
+            reg as lhs,
+            0000 0000 0000 00,
+            imm32 as rhs
+        } {
+            dst = lhs >> rhs;
+            ip = ip + 8;
+        };
+
+        instruction not_rr = {
+            0011 0010,
+            reg as dst,
+            reg as src,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            dst = ~src;
+            ip = ip + 8;
+        };
+
+        instruction cmp_rr = {
+            0100 0000,
+            reg as lhs,
+            reg as rhs,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            cmp_result = lhs - rhs;
+            ip = ip + 8;
+        };
+
+        instruction cmp_ri = {
+            0100 0001,
+            reg as lhs,
+            0000 0000 0000 0000 000,
+            imm32 as rhs
+        } {
+            cmp_result = lhs - rhs;
+            ip = ip + 8;
+        };
+
+        instruction jmp_l = {
+            0101 0000,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            ip = target;
+        };
+
+        instruction beq_l = {
+            0101 0001,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            if cmp_result == 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction bne_l = {
+            0101 0010,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            if cmp_result != 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction blt_l = {
+            0101 0011,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            let signed_cmp = cmp_result;
+            if cmp_result >= 0x80000000 then
+                signed_cmp = cmp_result - 0x100000000;
+            if signed_cmp < 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction bgt_l = {
+            0101 0100,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            let signed_cmp = cmp_result;
+            if cmp_result >= 0x80000000 then
+                signed_cmp = cmp_result - 0x100000000;
+            if signed_cmp > 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction ble_l = {
+            0101 0101,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            let signed_cmp = cmp_result;
+            if cmp_result >= 0x80000000 then
+                signed_cmp = cmp_result - 0x100000000;
+            if signed_cmp <= 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction bge_l = {
+            0101 0110,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            let signed_cmp = cmp_result;
+            if cmp_result >= 0x80000000 then
+                signed_cmp = cmp_result - 0x100000000;
+            if signed_cmp >= 0 then
+                ip = target;
+            else
+                ip = ip + 8;
+        };
+
+        instruction call_l = {
+            0101 0111,
+            0000 0000 0000 0000 0000 0000,
+            label32 as target
+        } {
+            let address = sp - 4;
+            sp = address;
+            ram:4[address] = ip + 8;
+            ip = target;
+        };
+
+        instruction ret_insn = {
+            0101 1000,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+        } {
+            let address = sp;
+            ip = ram:4[address];
+            sp = address + 4;
+        };
+
+        instruction halt_insn = {
+            0101 1001,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+        } {
+            ip = ip + 8;
+        };
+
+        instruction in_r = {
+            0101 1010,
+            reg as dst,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 000
+        } {
+            dst = INPUT;
+            ip = ip + 8;
+        };
+
+        instruction out_r = {
+            0101 1011,
+            reg as src,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 000
+        } {
+            OUTPUT = src & 0xFF;
+            ip = ip + 8;
+        };
+
+        instruction out_i = {
+            0101 1100,
+            0000 0000 0000 0000 0000 0000,
+            imm32 as value
+        } {
+            OUTPUT = value & 0xFF;
+            ip = ip + 8;
+        };
+
+        instruction trap_insn = {
+            0101 1101,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+        } {
+            ip = ip + 8;
+        };
+
+        instruction iret_insn = {
+            0101 1110,
+            0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+        } {
+            let address = sp;
+            ip = ram:4[address];
+            sp = address + 4;
+        };
+
+    mnemonics:
+        mnemonic nop();
+
+        mnemonic mov for mov_rr(dst, src) "{1}, {2}",
+                    for mov_ri(dst, value) "{1}, #{2}",
+                    for mov_rl(dst, value) "{1}, {2}",
+                    for mov_rm(dst, base, off) "{1}, [{2} + {3}]",
+                    for mov_ra(dst, address) "{1}, [{2}]",
+                    for mov_mr(base, src, off) "[{1} + {3}], {2}",
+                    for mov_mi(base, off, value) "[{1} + {2}], #{3}",
+                    for mov_ar(src, address) "[{2}], {1}",
+                    for mov_ai(address, value) "[{1}], #{2}",
+                    for mov_al(address, value) "[{1}], {2}";
+
+        mnemonic push for push_r(src) "{1}";
+        mnemonic pop for pop_r(dst) "{1}";
+
+        mnemonic add for add_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                    for add_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic sub for sub_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                    for sub_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic mul for mul_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                    for mul_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic div for div_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                    for div_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic cmp for cmp_rr(lhs, rhs) "{1}, {2}",
+                    for cmp_ri(lhs, rhs) "{1}, #{2}";
+
+        mnemonic jmp for jmp_l(target) "{1}";
+        mnemonic beq for beq_l(target) "{1}";
+        mnemonic bne for bne_l(target) "{1}";
+        mnemonic blt for blt_l(target) "{1}";
+        mnemonic bgt for bgt_l(target) "{1}";
+        mnemonic ble for ble_l(target) "{1}";
+        mnemonic bge for bge_l(target) "{1}";
+        mnemonic call for call_l(target) "{1}";
+        mnemonic ret for ret_insn();
+        mnemonic halt for halt_insn();
+        mnemonic trap for trap_insn();
+        mnemonic iret for iret_insn();
+
+        mnemonic in for in_r(dst) "{1}";
+        mnemonic out for out_r(src) "{1}",
+                     for out_i(value) "#{1}";
+}
