@@ -406,6 +406,50 @@ static void free_tree_node(TreeNode* t) {
   free(t);
 }
 
+static int antlr_tree_is_nil(pANTLR3_BASE_TREE tree) {
+  pANTLR3_STRING text = NULL;
+  if (!tree) return 0;
+  if (tree->isNilNode && tree->isNilNode(tree)) return 1;
+  if (!tree->toString) return 0;
+  text = tree->toString(tree);
+  if (!text || !text->chars) return 0;
+  return strcmp((const char*)text->chars, "nil") == 0;
+}
+
+static TreeNode* convert_antlr_tree_node(pANTLR3_BASE_TREE tree) {
+  TreeNode* node = NULL;
+  pANTLR3_STRING text = NULL;
+  ANTLR3_UINT32 child_count = 0;
+
+  if (!tree) return NULL;
+  if (antlr_tree_is_nil(tree)) {
+    node = create_tree_node("");
+  } else {
+    text = tree->toString ? tree->toString(tree) : NULL;
+    node = create_tree_node((text && text->chars) ? (const char*)text->chars : "");
+  }
+
+  child_count = tree->getChildCount ? tree->getChildCount(tree) : 0;
+  for (ANTLR3_UINT32 i = 0; i < child_count; ++i) {
+    pANTLR3_BASE_TREE child =
+        (pANTLR3_BASE_TREE)(tree->getChild ? tree->getChild(tree, i) : NULL);
+    TreeNode* child_node = convert_antlr_tree_node(child);
+    if (!child_node) continue;
+    if (child_node->label[0] == '\0') {
+      for (int j = 0; j < child_node->child_count; ++j) {
+        add_child(node, child_node->children[j]);
+        child_node->children[j] = NULL;
+      }
+      child_node->child_count = 0;
+      free_tree_node(child_node);
+    } else {
+      add_child(node, child_node);
+    }
+  }
+
+  return node;
+}
+
 /* --- Парсинг toStringTree в структуру дерева --- */
 static TreeNode* parse_tree_from_string(const char* s) {
   if (!s || !*s) return NULL;
@@ -2408,9 +2452,7 @@ AnalysisResult* build_cfg_from_parse_trees(SourceFileInfo** files,
     sf->functions_count = 0;
     reset_function_state(&state);
 
-    pANTLR3_STRING tstr = sf->parse_tree->toStringTree(sf->parse_tree);
-    const char* tree_str = (const char*)tstr->chars;
-    trees[i] = parse_tree_from_string(tree_str);
+    trees[i] = convert_antlr_tree_node((pANTLR3_BASE_TREE)sf->parse_tree);
 
     // Подсчитываем функции рекурсивно
     collect_class_defs(trees[i], res);
@@ -2986,6 +3028,12 @@ static Symbol* append_symbol(SymbolTable* st) {
 
 static int is_object_type(SymbolTable* st, const char* type_name) {
   return st && st->analysis && type_name && find_user_type(st->analysis, type_name);
+}
+
+static int is_implicit_field_name(SymbolTable* st, const char* name) {
+  if (!st || !name || !st->function || !st->function->owner_type) return 0;
+  if (find_symbol(st, name)) return 0;
+  return find_field_in_type(st->analysis, st->function->owner_type, name) != NULL;
 }
 
 static Symbol* add_local_symbol(SymbolTable* st, const char* name,
@@ -4157,8 +4205,8 @@ static void emit_heap_array_alloc(const char* elem_count_expr, int dst_reg,
                                   SymbolTable* st, Instr** head, Instr** tail,
                                   char** pending_label_ptr,
                                   CfgBuilderState* state) {
-  char* heap_ready = strdupf("__heap_ready_%d",
-                             state ? state->cond_label_counter++ : 0);
+  (void)state;
+  char* heap_ready = strdupf("__heap_ready_%d", g_heap_label_counter++);
   const char* count_expr =
       (elem_count_expr && elem_count_expr[0]) ? elem_count_expr : "1";
 
@@ -5098,12 +5146,9 @@ static void collect_symbols_from_stmt(SymbolTable* symtab, const char* stmt_text
     if (split_array_suffix(lhs_buf, var_name, sizeof(var_name), rhs_buf,
                            sizeof(rhs_buf))) {
       get_var_offset(symtab, var_name);
-    } else if (is_simple_ident(lhs_buf)) {
+    } else if (is_simple_ident(lhs_buf) &&
+               !is_implicit_field_name(symtab, lhs_buf)) {
       get_var_offset(symtab, lhs_buf);
-    }
-
-    if (sscanf(text, "%127[^= ] = %d", var_name, &val) == 2) {
-      get_var_offset(symtab, var_name);
     }
     return;
   }
@@ -5794,7 +5839,7 @@ static void append_runtime_asm(FILE* out) {
 
 void generate_tac_assembly(AnalysisResult* res, const char* outfile) {
   const int instr_size_bytes = 8;
-  const int bootstrap_instrs = 4;
+  const int bootstrap_instrs = 7;
   const int stack_top = 1040000;
   FILE* f = fopen(outfile, "w");
   if (!f) {
@@ -5839,6 +5884,9 @@ void generate_tac_assembly(AnalysisResult* res, const char* outfile) {
     fprintf(f, "start:\n");
     fprintf(f, "    mov     sp, #%d\n", stack_top);
     fprintf(f, "    mov     fp, sp\n");
+    fprintf(f, "    mov     r5, #%d\n", BUILTIN_HEAP_PTR_ADDR);
+    fprintf(f, "    mov     r6, #%d\n", BUILTIN_HEAP_START_ADDR);
+    fprintf(f, "    mov     [r5 + 0], r6\n");
     fprintf(f, "    call    main\n");
     fprintf(f, "    halt\n\n");
     global_pc = bootstrap_instrs * instr_size_bytes;

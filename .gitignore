@@ -24,18 +24,4 @@ desktop.ini
 /out/
 
 # Generated top-level build outputs
-/build/*.asm
-/build/*.dgml
-/build/*.ptptb
-/build/*.sym
-/build/*.stdin.txt
-/build/*.stdout.txt
-/build/*.stderr.txt
-/build/*.input.txt
-
-# Generated helper directories
-/build/rt/
-/build/src/
-
-# Reference dumps / examples
-/build/reference/
+/build/

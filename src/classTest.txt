@@ -1,53 +1,72 @@
-class Pair<T> {
-    T left;
-    T right;
+class List<T> {
+    T[] arr;
+    int count;
+    int capacity;
 
-    set(T a, T b) {
-        left = a;
-        right = b;
+    void init() {
+        int x[32];
+        this.arr = x;
+        this.count = 0;
+        this.capacity = 32;
     }
 
-    T sum() {
-        return left + right;
+    void expand() {
+        this.capacity = this.capacity * 2;
+        int y[this.capacity];
+        int n = 0;
+        while (n < this.count) {
+            y[n] = this.arr[n];
+            n = n + 1;
+        }
+        this.arr = y;
+    }
+
+    void add(T value) {
+        if (this.count >= this.capacity) {
+            expand();
+        }
+        this.arr[this.count] = value;
+        this.count = this.count + 1;
+    }
+
+    void printValues() {
+        int n = 0;
+        while (n < this.count) {
+            printValue(this.arr[n]);
+            n = n + 1;
+        }
     }
 }
 
-class Point : Pair<int> {
-    int bias;
+class Vec2i {
+    int x;
+    int y;
 
-    setBias(int value) {
-        bias = value;
-    }
-
-    int sum(int delta) {
-        int base = left + right;
-        return base + delta;
-    }
-
-    int sumWithBias() {
-        int base = left + right;
-        return base + bias;
+    void init(int a, int b) {
+        this.x = a;
+        this.y = b;
     }
 }
 
-void print(int arg) {
-        out(arg);
-        out('\n');
-        return;
+void writeByte(int arg) {
+    out(arg);
 }
-
 
 void printInt(int x) {
-    if(x>10){
+    if (x < 0) {
+        out('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
         int div = 1;
         int t = x;
 
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
 
-        while (t >= 10) {    
-            t = x / div;
-            div = div * 10; 
-        } 
-        div = div / 10;
         while (div > 0) {
             int digit = x / div;
             out(digit + '0');
@@ -55,43 +74,90 @@ void printInt(int x) {
             div = div / 10;
         }
     }
-    else
-    {
+    else {
         out(x + '0');
     }
-    
-    
 }
 
-void printLine(char tag, int value) {
-    out(tag);
-    out('=');
-    printInt(value);
+void printValue(int n) {
+    printInt(n);
     out('\n');
 }
 
+void printVec2i(Vec2i v) {
+    writeByte('x');
+    writeByte('=');
+    printInt(v.x);
+    out('\n');
+    writeByte('y');
+    writeByte('=');
+    printInt(v.y);
+    out('\n');
+}
+
+void printValue(Vec2i v) {
+    printVec2i(v);
+}
+
+int sum(List<int> a) {
+    int n = 0;
+    int s = 0;
+    while (n < a.count) {
+        s = s + a.arr[n];
+        n = n + 1;
+    }
+    return s;
+}
+
 int main() {
-    Pair<int> pair;
-    pair.set(1, 2);
-    int p0 = pair.sum();
+    List<int> vn;
+    vn.init();
 
-    Point a;
-    a.set(20, 3);
-    a.setBias(1);
-    int a0 = a.sum();
-    int a1 = a.sum(4);
-    int a2 = a.sumWithBias();
+    int n = 0;
+    while (n < 20) {
+        vn.add(n);
+        n = n + 1;
+    }
+    writeByte('v');
+    writeByte('n');
+    out('\n');
+    vn.printValues();
 
-    Point b;
-    b.set(4, 1);
-    b.setBias(2);
-    int b0 = b.sumWithBias();
+    int s = sum(vn);
+    writeByte('S');
+    writeByte('=');
+    printInt(s);
+    out('\n');
 
-    printLine('P', p0);
-    printLine('A', a0);
-    printLine('B', a1);
-    printLine('C', a2);
-    printLine('D', b0);
+    Vec2i v;
+    v.init(s, 20 - s);
+    writeByte('v');
+    writeByte('e');
+    writeByte('c');
+    writeByte('2');
+    out('\n');
+    printVec2i(v);
+
+    List<Vec2i> vv;
+    vv.init();
+    
+    n = 0;
+    while (n < 20) {
+        Vec2i tmp;
+        tmp=makeVec2i(n, 20-n);
+        vv.add(tmp);
+        n = n + 1;
+    }
+    writeByte('v');
+    writeByte('v');
+    out('\n');
+    vv.printValues();
 
     return 0;
+}
+
+Vec2i makeVec2i(int x, int y) {
+    Vec2i v;
+    v.init(x,y);
+    return v;
 }

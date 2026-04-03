@@ -38,6 +38,9 @@ $managerExe = Resolve-AbsolutePath -Path $ManagerPath -MustExist
 $sslCfgPath = Resolve-AbsolutePath -Path $SslConfig -MustExist
 
 New-Item -ItemType Directory -Force (Split-Path -Parent $binaryPath) | Out-Null
+if (Test-Path -LiteralPath $binaryPath) {
+    Remove-Item -LiteralPath $binaryPath -Force
+}
 
 $startOutput = & $managerExe -sslcfg $sslCfgPath -ul $Login -up $Password -q -w -s Assemble asmListing $asmPath definitionFile $definitionPath archName $ArchName 2>&1
 $startText = ($startOutput | Out-String).Trim()

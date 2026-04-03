@@ -66,6 +66,9 @@ tokens {
 // --- Лексика ---
 
 BOOL    : 'true' | 'false';
+CLASS   : 'class';
+PUBLIC  : 'public';
+PRIVATE : 'private';
 
 HEX     : '0' ('x'|'X') ('0'..'9'|'a'..'f'|'A'..'F')+;
 
@@ -117,7 +120,7 @@ sourceItem
     ;
 
 classDef
-    : 'class' ID templateParams? inheritanceSpec? '{' member* '}'
+    : CLASS ID templateParams? inheritanceSpec? '{' member* '}'
       -> ^(CLASS_DEF ID templateParams? inheritanceSpec? member*)
     ;
 
@@ -132,8 +135,8 @@ inheritanceSpec
     ;
 
 member
-    : modifier? ((funcSignature (block | ';'))=> funcDef | field)
-      -> ^(MEMBER modifier? funcDef? field?)
+    : modifier? (((typeRef ID '(')=> typedMethodDef) | ((ID '(')=> implicitMethodDef) | field)
+      -> ^(MEMBER modifier? typedMethodDef? implicitMethodDef? field?)
     ;
 
 field
@@ -142,29 +145,35 @@ field
     ;
 
 modifier
-    : 'public' -> ^(MODIFIER 'public')
-    | 'private' -> ^(MODIFIER 'private')
+    : PUBLIC -> ^(MODIFIER PUBLIC)
+    | PRIVATE -> ^(MODIFIER PRIVATE)
     ;
 
 
 // === Functions ===
 
 funcDef
+    : typedMethodDef
+    | implicitMethodDef
+    ;
 
-    : funcSignature (block | ';')
+typedMethodDef
+    : typeRef ID '(' argList ')' (block | ';')
+      -> ^(FUNC_DEF ^(FUNC_SIG typeRef ID argList) block?)
+    ;
 
-      -> ^(FUNC_DEF funcSignature block?)
-
+implicitMethodDef
+    : ID '(' argList ')' (block | ';')
+      -> ^(FUNC_DEF ^(FUNC_SIG ID argList) block?)
     ;
 
 
 
 funcSignature
-
-    : typeRef? ID '(' argList ')' 
-
-      -> ^(FUNC_SIG typeRef? ID argList)
-
+    : typeRef ID '(' argList ')' 
+      -> ^(FUNC_SIG typeRef ID argList)
+    | ID '(' argList ')'
+      -> ^(FUNC_SIG ID argList)
     ;
 
 

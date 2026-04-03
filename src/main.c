@@ -19,6 +19,18 @@ typedef struct {
   int child;
 } Link;
 
+static int g_parse_error_seen = 0;
+static const char* g_progress_file = NULL;
+
+static void note_progress(const char* message) {
+  FILE* f = NULL;
+  if (!g_progress_file || !message) return;
+  f = fopen(g_progress_file, "ab");
+  if (!f) return;
+  fprintf(f, "%s\n", message);
+  fclose(f);
+}
+
 typedef struct {
   int arrival_time;
   int service_time;
@@ -835,10 +847,84 @@ static void write_dgml_from_toStringTree(const char* s, FILE* out) {
   fprintf(out, "</DirectedGraph>\n");
 }
 
+static int antlr_tree_is_nil_node(pANTLR3_BASE_TREE tree) {
+  pANTLR3_STRING text = NULL;
+  if (!tree) return 0;
+  if (tree->isNilNode && tree->isNilNode(tree)) return 1;
+  if (!tree->toString) return 0;
+  text = tree->toString(tree);
+  if (!text || !text->chars) return 0;
+  return strcmp((const char*)text->chars, "nil") == 0;
+}
+
+static void write_dgml_tree_links(FILE* out, pANTLR3_BASE_TREE tree,
+                                  int parent_id, int* next_id) {
+  ANTLR3_UINT32 child_count = 0;
+  if (!out || !tree || !next_id) return;
+
+  child_count = tree->getChildCount ? tree->getChildCount(tree) : 0;
+  for (ANTLR3_UINT32 i = 0; i < child_count; ++i) {
+    pANTLR3_BASE_TREE child =
+        (pANTLR3_BASE_TREE)(tree->getChild ? tree->getChild(tree, i) : NULL);
+    pANTLR3_STRING text = NULL;
+    int current_id = parent_id;
+
+    if (!child) continue;
+    if (!antlr_tree_is_nil_node(child)) {
+      text = child->toString ? child->toString(child) : NULL;
+      current_id = (*next_id)++;
+      fprintf(out, "    <Node Id=\"n%d\" Label=\"", current_id);
+      write_xml_escaped_label((text && text->chars) ? (const char*)text->chars : "", out);
+      fprintf(out, "\" />\n");
+      if (parent_id > 0) {
+        fprintf(out, "    <Link Source=\"n%d\" Target=\"n%d\" />\n", parent_id,
+                current_id);
+      }
+    }
+
+    write_dgml_tree_links(out, child, current_id, next_id);
+  }
+}
+
+static void write_dgml_from_antlr_tree(pANTLR3_BASE_TREE tree, FILE* out) {
+  pANTLR3_STRING text = NULL;
+  int next_id = 2;
+  if (!tree || !out) return;
+
+  fprintf(out, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+  fprintf(out,
+          "<DirectedGraph Title=\"ParseTree\" "
+          "xmlns=\"http://schemas.microsoft.com/vs/2009/dgml\">\n");
+  fprintf(out, "  <Nodes>\n");
+
+  text = tree->toString ? tree->toString(tree) : NULL;
+  fprintf(out, "    <Node Id=\"n1\" Label=\"");
+  write_xml_escaped_label((text && text->chars) ? (const char*)text->chars : "", out);
+  fprintf(out, "\" />\n");
+  write_dgml_tree_links(out, tree, 1, &next_id);
+
+  fprintf(out, "  </Nodes>\n");
+  fprintf(out, "  <Links>\n");
+  {
+    int dummy_id = 2;
+    ANTLR3_UINT32 child_count = tree->getChildCount ? tree->getChildCount(tree) : 0;
+    for (ANTLR3_UINT32 i = 0; i < child_count; ++i) {
+      pANTLR3_BASE_TREE child =
+          (pANTLR3_BASE_TREE)(tree->getChild ? tree->getChild(tree, i) : NULL);
+      if (child && !antlr_tree_is_nil_node(child)) {
+        fprintf(out, "    <Link Source=\"n1\" Target=\"n%d\" />\n", dummy_id++);
+      }
+    }
+  }
+  fprintf(out, "  </Links>\n");
+  fprintf(out, "</DirectedGraph>\n");
+}
+
 /* --- Обработчик ошибок парсера --- */
 static void parser_error_display(pANTLR3_BASE_RECOGNIZER recognizer,
                                  pANTLR3_UINT8* tokenNames) {
   (void)tokenNames;  // не используем, чтобы не ругался компилятор
+  g_parse_error_seen = 1;
 
   if (!recognizer || !recognizer->state) {
     fprintf(stderr, "Syntax error (unknown recognizer state)\n");
@@ -887,27 +973,53 @@ static void parser_error_display(pANTLR3_BASE_RECOGNIZER recognizer,
 int main(int argc, char* argv[]) {
   const char* asm_output_file = NULL;
   const char* dgml_output_file = NULL;
+  const char* input_file = NULL;
+  const char* progress_file = NULL;
+  char asm_out[1024];
+  int special_status;
+  int parse_only = 0;
+  int argi = 1;
 
-  if (argc < 2) {
+  while (argc > argi && argv[argi][0] == '-') {
+    if (strcmp(argv[argi], "--parse-only") == 0) {
+      parse_only = 1;
+      argi++;
+      continue;
+    }
+    if (strcmp(argv[argi], "--progress-file") == 0) {
+      if (argc <= argi + 1) {
+        fprintf(stderr, "--progress-file requires a path\n");
+        return 1;
+      }
+      progress_file = argv[argi + 1];
+      argi += 2;
+      continue;
+    }
+    break;
+  }
+
+  g_progress_file = progress_file;
+  note_progress("main: start");
+
+  if (argc <= argi) {
     fprintf(stderr,
-            "Usage: %s <inputfile> [output.asm] [parse_tree.dgml]\n",
+            "Usage: %s [--parse-only] [--progress-file path] <inputfile> [output.asm] [parse_tree.dgml]\n",
             argv[0]);
     return 1;
   }
 
-  const char* input_file = argv[1];
-  char asm_out[1024];
-  int special_status;
+  input_file = argv[argi++];
 
-  if (argc >= 3) {
-    if (ends_with_literal(argv[2], ".dgml")) {
-      dgml_output_file = argv[2];
+  if (argc > argi) {
+    if (ends_with_literal(argv[argi], ".dgml")) {
+      dgml_output_file = argv[argi];
     } else {
-      asm_output_file = argv[2];
+      asm_output_file = argv[argi];
     }
+    argi++;
   }
-  if (argc >= 4) {
-    dgml_output_file = argv[3];
+  if (argc > argi) {
+    dgml_output_file = argv[argi];
   }
 
   if (asm_output_file) {
@@ -936,15 +1048,39 @@ int main(int argc, char* argv[]) {
   pANTLR3_COMMON_TOKEN_STREAM tokens =
       antlr3CommonTokenStreamSourceNew(ANTLR3_SIZE_HINT, TOKENSOURCE(lexer));
   pSimpleLangParser parser = SimpleLangParserNew(tokens);
+  g_parse_error_seen = 0;
+  note_progress("main: parser created");
 
   /* наш обработчик ошибок */
   pANTLR3_BASE_RECOGNIZER base = (pANTLR3_BASE_RECOGNIZER)parser;
   base->displayRecognitionError = parser_error_display;
 
+  note_progress("main: parse begin");
   SimpleLangParser_source_return r = parser->source(parser);
+  note_progress("main: parse end");
+  {
+    const char* debug_progress = getenv("SIMPLELANG_DEBUG_PROGRESS");
+    if (debug_progress && strcmp(debug_progress, "0") != 0) {
+      fprintf(stderr, "Progress: parse finished\n");
+    }
+  }
+
+  if (g_parse_error_seen) {
+    fprintf(stderr, "Parsing failed\n");
+    note_progress("main: parse failed");
+    parser->free(parser);
+    tokens->free(tokens);
+    lexer->free(lexer);
+    input->close(input);
+    return 2;
+  }
 
   /* --- Построение CFG из дерева парсера --- */
   if (r.tree != NULL) {
+    const char* parse_only_env = getenv("SIMPLELANG_PARSE_ONLY");
+    int skip_cfg =
+        parse_only || (parse_only_env && strcmp(parse_only_env, "0") != 0);
+    if (!skip_cfg) {
     SourceFileInfo* sf = malloc(sizeof(SourceFileInfo));
     sf->filename = strdupsafe(input_file);
     sf->parse_tree = (pANTLR3_BASE_TREE)r.tree;
@@ -955,24 +1091,43 @@ int main(int argc, char* argv[]) {
     files[0] = sf;
     int files_count = 1;
 
+    {
+      const char* debug_progress = getenv("SIMPLELANG_DEBUG_PROGRESS");
+      if (debug_progress && strcmp(debug_progress, "0") != 0) {
+        fprintf(stderr, "Progress: CFG build begin\n");
+      }
+    }
+    note_progress("main: cfg begin");
     AnalysisResult* res = build_cfg_from_parse_trees(files, files_count);
+    note_progress("main: cfg end");
+    {
+      const char* debug_progress = getenv("SIMPLELANG_DEBUG_PROGRESS");
+      if (debug_progress && strcmp(debug_progress, "0") != 0) {
+        fprintf(stderr, "Progress: CFG build done\n");
+      }
+    }
 
     /* 1) CFG + CallGraph DGML (как было) */
     write_cfg_callgraph_dgml(res, "cfg_callgraph");
 
     /* 2) TAC-VM .tac файл на основе CFG */
+    note_progress("main: asm begin");
     generate_tac_assembly(res, asm_out);
+    note_progress("main: asm end");
     fprintf(stderr, "Assembly written to %s\n", asm_out);
 
     free_analysis_result(res);
     free(sf->filename);
     free(sf);
+    } else {
+      FILE* empty_asm = fopen(asm_out, "wb");
+      if (empty_asm) fclose(empty_asm);
+      note_progress("main: parse-only asm stub");
+    }
   }
 
   /* --- DGML для parse tree (по toStringTree) --- */
   if (r.tree != NULL) {
-    pANTLR3_STRING tstr = r.tree->toStringTree(r.tree);
-
     FILE* out = stdout;
     if (dgml_output_file) {
       out = fopen(dgml_output_file, "wb");
@@ -983,7 +1138,9 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    write_dgml_from_toStringTree((const char*)tstr->chars, out);
+    note_progress("main: dgml begin");
+    write_dgml_from_antlr_tree((pANTLR3_BASE_TREE)r.tree, out);
+    note_progress("main: dgml end");
 
     if (out != stdout) fclose(out);
   } else {
@@ -994,6 +1151,7 @@ int main(int argc, char* argv[]) {
   tokens->free(tokens);
   lexer->free(lexer);
   input->close(input);
+  note_progress("main: done");
 
   return 0;
 }
