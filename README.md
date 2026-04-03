@@ -1,0 +1,49 @@
+# SPO 3
+
+Краткая карта проекта.
+
+## Главная цепочка
+
+```text
+simpleLang source
+-> remote-parser.ps1
+-> asm + dgml
+-> remotetasks-assemble.ps1
+-> ptptb
+-> remotetasks-run.ps1
+```
+
+## Главные файлы
+
+- грамматика: `src/SimpleLang.g`
+- генератор: `src/cfg_builder.c`
+- VM: `src/TacVm13.target.pdsl`
+- runtime I/O:
+  - `src/runtime/in.asm`
+  - `src/runtime/out.asm`
+
+## Основные документы
+
+- `TESTING.md` - команды для проверки
+- `LAB5.md` - отдельная памятка по лабораторной 5
+- `VIRTUAL_MACHINE.md` - описание `TacVm13`
+- `REMOTE_TASKS_MANAGER.md` - как используется `Portable.RemoteTasks.Manager.exe`
+- `programm.md` - текущее состояние языка и генератора
+
+## Быстрый старт
+
+### Smoke-test
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\remote-parser.ps1 -InputFile .\src\test_echo.txt -AsmOutput .\build\test_echo.asm -ParseTreeOutput .\build\test_echo.dgml
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-assemble.ps1 -AsmListing .\build\test_echo.asm -DefinitionFile .\src\TacVm13.target.pdsl -ArchName TacVm13 -BinaryOutput .\build\test_echo.ptptb
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-run.ps1 -BinaryFile .\build\test_echo.ptptb -DefinitionFile .\src\TacVm13.target.pdsl -RunMode InputFile -InputFile .\build\test_echo.stdin.txt -StdinRegStorage INPUT -StdoutRegStorage OUTPUT -ArchName TacVm13
+```
+
+### Лабораторная 5
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\remote-parser.ps1 -InputFile .\src\classTest.txt -AsmOutput .\build\classTest.asm -ParseTreeOutput .\build\classTest.dgml -RemoteRunTimeoutSeconds 180
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-assemble.ps1 -AsmListing .\build\classTest.asm -DefinitionFile .\src\TacVm13.target.pdsl -ArchName TacVm13 -BinaryOutput .\build\classTest.ptptb
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-run.ps1 -BinaryFile .\build\classTest.ptptb -DefinitionFile .\src\TacVm13.target.pdsl -RunMode InteractiveInput -StdinRegStorage INPUT -StdoutRegStorage OUTPUT -ArchName TacVm13
+```
