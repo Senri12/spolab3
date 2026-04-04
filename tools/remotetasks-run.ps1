@@ -4,6 +4,7 @@ param(
     [string]$DevicesFile = "src/TacVm13.devices.xml",
     [ValidateSet("InteractiveInput", "InputFile", "WithIo")]
     [string]$RunMode = "InteractiveInput",
+    [int]$WithIoInteractiveSession = 1,
     [string]$InputFile = "build/empty.stdin.txt",
     [string]$StdinRegStorage = "INPUT",
     [string]$StdoutRegStorage = "OUTPUT",
@@ -36,27 +37,68 @@ function Resolve-AbsolutePath {
     return $resolved
 }
 
+function Convert-ToManagerPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$AbsolutePath
+    )
+
+    $projectPrefix = $projectRoot.TrimEnd('\') + '\'
+    if ($AbsolutePath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $AbsolutePath.Substring($projectPrefix.Length)
+    }
+    return $AbsolutePath
+}
+
+function Get-ManagerBaseArgs {
+    param(
+        [string]$SslCfg,
+        [string]$LoginValue,
+        [string]$PasswordValue
+    )
+
+    $args = @()
+    if (-not [string]::IsNullOrWhiteSpace($SslCfg)) {
+        $resolvedSsl = Resolve-AbsolutePath -Path $SslCfg -MustExist
+        $args += @("-sslcfg", (Convert-ToManagerPath -AbsolutePath $resolvedSsl))
+    }
+    $args += @("-ul", $LoginValue, "-up", $PasswordValue)
+    return $args
+}
+
 $binaryPath = Resolve-AbsolutePath -Path $BinaryFile -MustExist
 $definitionPath = Resolve-AbsolutePath -Path $DefinitionFile -MustExist
 $managerExe = Resolve-AbsolutePath -Path $ManagerPath -MustExist
-$sslCfgPath = Resolve-AbsolutePath -Path $SslConfig -MustExist
+$managerBaseArgs = Get-ManagerBaseArgs -SslCfg $SslConfig -LoginValue $Login -PasswordValue $Password
+$binaryManagerPath = Convert-ToManagerPath -AbsolutePath $binaryPath
+$definitionManagerPath = Convert-ToManagerPath -AbsolutePath $definitionPath
 
 if ($RunMode -eq "WithIo") {
     $devicesPath = Resolve-AbsolutePath -Path $DevicesFile -MustExist
-    & $managerExe -sslcfg $sslCfgPath -ul $Login -up $Password -s ExecuteBinaryWithIo -ib devices.xml $devicesPath definitionFile $definitionPath archName $ArchName binaryFileToRun $binaryPath codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
+    $devicesManagerPath = Convert-ToManagerPath -AbsolutePath $devicesPath
+    $withIoArgs = @()
+    if ($WithIoInteractiveSession -eq 0) {
+        $withIoArgs += "-w"
+    }
+    $withIoArgs += @("-s", "ExecuteBinaryWithIo")
+    if ($WithIoInteractiveSession -ne 0) {
+        $withIoArgs += "-ip"
+    }
+    $withIoArgs += @("devices.xml", $devicesManagerPath, "definitionFile", $definitionManagerPath, "archName", $ArchName, "binaryFileToRun", $binaryManagerPath, "codeRamBankName", "ram", "ipRegStorageName", "ip", "finishMnemonicName", "halt")
+    & $managerExe @managerBaseArgs @withIoArgs
     if ($LASTEXITCODE -ne 0) {
         throw "ExecuteBinaryWithIo failed"
     }
 }
 elseif ($RunMode -eq "InputFile") {
     $inputPath = Resolve-AbsolutePath -Path $InputFile -MustExist
-    & $managerExe -sslcfg $sslCfgPath -ul $Login -up $Password -s ExecuteBinaryWithInput -ib stdinRegStName $StdinRegStorage stdoutRegStName $StdoutRegStorage inputFile $inputPath definitionFile $definitionPath archName $ArchName binaryFileToRun $binaryPath codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
+    $inputManagerPath = Convert-ToManagerPath -AbsolutePath $inputPath
+    & $managerExe @managerBaseArgs -s ExecuteBinaryWithInput -ib stdinRegStName $StdinRegStorage stdoutRegStName $StdoutRegStorage inputFile $inputManagerPath definitionFile $definitionManagerPath archName $ArchName binaryFileToRun $binaryManagerPath codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
     if ($LASTEXITCODE -ne 0) {
         throw "ExecuteBinaryWithInput failed"
     }
 }
 else {
-    & $managerExe -sslcfg $sslCfgPath -ul $Login -up $Password -s ExecuteBinaryWithInteractiveInput -ib stdinRegStName $StdinRegStorage stdoutRegStName $StdoutRegStorage definitionFile $definitionPath archName $ArchName binaryFileToRun $binaryPath codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
+    & $managerExe @managerBaseArgs -s ExecuteBinaryWithInteractiveInput -ib stdinRegStName $StdinRegStorage stdoutRegStName $StdoutRegStorage definitionFile $definitionManagerPath archName $ArchName binaryFileToRun $binaryManagerPath codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
     if ($LASTEXITCODE -ne 0) {
         throw "ExecuteBinaryWithInteractiveInput failed"
     }

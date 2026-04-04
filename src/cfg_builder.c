@@ -18,6 +18,8 @@ typedef struct {
   int offset;  // например -4, +8
   int is_arg;  // 1 если offset > 0 (обычно)
   int is_object;
+  int is_array;
+  int array_length;
   int storage_offset;
   int storage_size;
   char name[128];
@@ -35,7 +37,8 @@ typedef struct {
 } FuncSyms;
 static void add_named_entry_typed(FuncSyms* fs, const char* name,
                                   const char* type_name, int off,
-                                  int is_object, int storage_offset,
+                                  int is_object, int is_array,
+                                  int array_length, int storage_offset,
                                   int storage_size) {
   int is_arg = off > 0;
   if (!fs) return;
@@ -49,6 +52,8 @@ static void add_named_entry_typed(FuncSyms* fs, const char* name,
   e->offset = off;
   e->is_arg = is_arg;
   e->is_object = is_object;
+  e->is_array = is_array;
+  e->array_length = array_length;
   e->storage_offset = storage_offset;
   e->storage_size = storage_size;
   e->name[0] = '\0';
@@ -64,7 +69,7 @@ static void add_named_entry_typed(FuncSyms* fs, const char* name,
 }
 
 static void add_named_entry(FuncSyms* fs, const char* name, int off) {
-  add_named_entry_typed(fs, name, "int", off, 0, 0, 0);
+  add_named_entry_typed(fs, name, "int", off, 0, 0, 0, 0, 0);
 }
 
 static int is_simple_ident(const char* s) {
@@ -376,15 +381,23 @@ typedef struct TreeNode {
   struct TreeNode** children;
   int child_count;
   int capacity;
+  int line;
+  int col;
 } TreeNode;
 
-static TreeNode* create_tree_node(const char* label) {
+static TreeNode* create_tree_node_at(const char* label, int line, int col) {
   TreeNode* t = malloc(sizeof(TreeNode));
-  t->label = strdup(label);
+  t->label = strdup(label ? label : "");
   t->children = NULL;
   t->child_count = 0;
   t->capacity = 0;
+  t->line = line > 0 ? line : 0;
+  t->col = col > 0 ? col : 0;
   return t;
+}
+
+static TreeNode* create_tree_node(const char* label) {
+  return create_tree_node_at(label, 0, 0);
 }
 
 static void add_child(TreeNode* parent, TreeNode* child) {
@@ -416,17 +429,57 @@ static int antlr_tree_is_nil(pANTLR3_BASE_TREE tree) {
   return strcmp((const char*)text->chars, "nil") == 0;
 }
 
+static int antlr_tree_get_line(pANTLR3_BASE_TREE tree) {
+  if (!tree || !tree->getLine) return 0;
+  return (int)tree->getLine(tree);
+}
+
+static int antlr_tree_get_column(pANTLR3_BASE_TREE tree) {
+  int zero_based = 0;
+  if (!tree || !tree->getCharPositionInLine) return 0;
+  zero_based = (int)tree->getCharPositionInLine(tree);
+  return zero_based >= 0 ? (zero_based + 1) : 0;
+}
+
+static void set_cfg_node_source(CFGNode* node, int line, int col) {
+  if (!node) return;
+  node->line = line > 0 ? line : 0;
+  node->col = col > 0 ? col : 0;
+}
+
+static void set_cfg_node_source_from_tree(CFGNode* node, const TreeNode* tree) {
+  if (!node || !tree) return;
+  set_cfg_node_source(node, tree->line, tree->col);
+}
+
+static void set_operation_source(Operation* op, int line, int col) {
+  if (!op) return;
+  op->line = line > 0 ? line : 0;
+  op->col = col > 0 ? col : 0;
+}
+
+static void set_last_operation_source_from_tree(CFGNode* block,
+                                                const TreeNode* tree) {
+  if (!block || block->ops_count <= 0 || !tree) return;
+  set_operation_source(block->ops[block->ops_count - 1], tree->line, tree->col);
+}
+
 static TreeNode* convert_antlr_tree_node(pANTLR3_BASE_TREE tree) {
   TreeNode* node = NULL;
   pANTLR3_STRING text = NULL;
   ANTLR3_UINT32 child_count = 0;
+  int line = 0;
+  int col = 0;
 
   if (!tree) return NULL;
+  line = antlr_tree_get_line(tree);
+  col = antlr_tree_get_column(tree);
   if (antlr_tree_is_nil(tree)) {
-    node = create_tree_node("");
+    node = create_tree_node_at("", line, col);
   } else {
     text = tree->toString ? tree->toString(tree) : NULL;
-    node = create_tree_node((text && text->chars) ? (const char*)text->chars : "");
+    node = create_tree_node_at(
+        (text && text->chars) ? (const char*)text->chars : "", line, col);
   }
 
   child_count = tree->getChildCount ? tree->getChildCount(tree) : 0;
@@ -444,6 +497,16 @@ static TreeNode* convert_antlr_tree_node(pANTLR3_BASE_TREE tree) {
       free_tree_node(child_node);
     } else {
       add_child(node, child_node);
+    }
+  }
+
+  if (node->line <= 0) {
+    for (int i = 0; i < node->child_count; ++i) {
+      TreeNode* child = node->children[i];
+      if (!child || child->line <= 0) continue;
+      node->line = child->line;
+      node->col = child->col;
+      break;
     }
   }
 
@@ -1633,6 +1696,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
   // BLOCK: создаём один базовый блок и собираем в него все линейные операции
   if (strcmp(label, "BLOCK") == 0) {
     CFGNode* block = create_node(st, "");
+    set_cfg_node_source_from_tree(block, tree);
     add_node(f, block);
     if (*current_block == NULL) {
       // если это первая точка входа, запомним её как entry возвращаемое
@@ -1689,6 +1753,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
               snprintf(declbuf, sizeof(declbuf), "decl int %s;", name);
             }
             append_operation(f, block, OP_ASSIGN, declbuf);
+            set_last_operation_source_from_tree(block, var_init);
             continue;
           }
           char buf[1024];
@@ -1699,6 +1764,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
             snprintf(buf, sizeof(buf), "decl int %s = %s;", name, value);
           }
           append_operation(f, block, OP_ASSIGN, buf);
+          set_last_operation_source_from_tree(block, var_init);
         }
         collect_calls(f, stmt);
         last_block_or_exit = block;
@@ -1721,6 +1787,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
           }
         }
         append_operation(f, block, iscall ? OP_CALL : OP_EXPR, buf);
+        set_last_operation_source_from_tree(block, stmt);
         // Собираем вызовы внутри выражения
         collect_calls(f, stmt);
         last_block_or_exit = block;
@@ -1734,6 +1801,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
         if (strlen(callbuf) > 0 && callbuf[strlen(callbuf) - 1] != ';')
           strncat(callbuf, ";", sizeof(callbuf) - strlen(callbuf) - 1);
         append_operation(f, block, OP_CALL, callbuf);
+        set_last_operation_source_from_tree(block, stmt);
         // имя функции
         char func_name[256] = "";
         find_callee_name_dfs(stmt, func_name, sizeof(func_name));
@@ -1755,6 +1823,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
         if (buf[strlen(buf) - 1] != ';')
           strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
         append_operation(f, block, OP_RETURN, buf);
+        set_last_operation_source_from_tree(block, stmt);
         collect_calls(f, stmt);
         // RETURN - закрывает блок (путь дальше недостижим)
         if (last_exit) *last_exit = block;
@@ -1765,6 +1834,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
       // BREAK
       if (strcmp(stmt->label, "BREAK") == 0) {
         append_operation(f, block, OP_BREAK, "break;");
+        set_last_operation_source_from_tree(block, stmt);
 
         LoopCtx ctx = top_loop(st);
         if (ctx.brk) {
@@ -1779,6 +1849,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
       // CONTINUE
       if (strcmp(stmt->label, "CONTINUE") == 0) {
         append_operation(f, block, OP_CONTINUE, "continue;");
+        set_last_operation_source_from_tree(block, stmt);
 
         CFGNode* loop_cond = top_loop_cond(st);
         if (loop_cond) {
@@ -1802,6 +1873,8 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
         if (stmt->child_count > 0) collect_calls(f, stmt->children[0]);
 
         cond_node = create_node(st, condition);
+        set_cfg_node_source_from_tree(
+            cond_node, (stmt->child_count > 0) ? stmt->children[0] : stmt);
         if (strcmp(stmt->label, "IF") == 0)
           cond_node->color = strdup("LightBlue");
         else
@@ -1957,6 +2030,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
     if (cond_tree) node_to_code(cond_tree, condition, sizeof(condition));
 
     CFGNode* cond_node = create_node(st, condition);
+    set_cfg_node_source_from_tree(cond_node, cond_tree ? cond_tree : tree);
     cond_node->color = strdup("LightBlue");
     add_node(f, cond_node);
 
@@ -2021,6 +2095,7 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
     if (cond_tree) node_to_code(cond_tree, condition, sizeof(condition));
 
     CFGNode* cond_node = create_node(st, condition);
+    set_cfg_node_source_from_tree(cond_node, cond_tree ? cond_tree : tree);
     cond_node->color = strdup("LightGreen");
     add_node(f, cond_node);
 
@@ -2106,8 +2181,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
       }
 
       CFGNode* node = create_node(st, "");
+      set_cfg_node_source_from_tree(node, var_init);
       add_node(f, node);
       append_operation(f, node, OP_ASSIGN, buf);
+      set_last_operation_source_from_tree(node, var_init);
       last_node = node;
     }
     if (last_exit) *last_exit = last_node;
@@ -2121,8 +2198,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
     if (strlen(buf) > 0 && buf[strlen(buf) - 1] != ';')
       strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
     CFGNode* node = create_node(st, "");
+    set_cfg_node_source_from_tree(node, tree);
     add_node(f, node);
     append_operation(f, node, OP_EXPR, buf);
+    set_last_operation_source_from_tree(node, tree);
     collect_calls(f, tree);
     if (last_exit) *last_exit = node;
     return node;
@@ -2135,8 +2214,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
     if (strlen(buf) > 0 && buf[strlen(buf) - 1] != ';')
       strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
     CFGNode* node = create_node(st, "");
+    set_cfg_node_source_from_tree(node, tree);
     add_node(f, node);
     append_operation(f, node, OP_CALL, buf);
+    set_last_operation_source_from_tree(node, tree);
     char func_name[256] = "";
     find_callee_name_dfs(tree, func_name, sizeof(func_name));
     if (func_name[0] == '\0')
@@ -2157,8 +2238,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
     if (buf[strlen(buf) - 1] != ';')
       strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
     CFGNode* node = create_node(st, "");
+    set_cfg_node_source_from_tree(node, tree);
     add_node(f, node);
     append_operation(f, node, OP_RETURN, buf);
+    set_last_operation_source_from_tree(node, tree);
     if (last_exit) *last_exit = node;
     return node;
   }
@@ -2942,6 +3025,9 @@ typedef struct Instr {
   char* mnemonic;
   Operand dst, src1, src2;  // для инструкций без операндов – игнорируются
   char* label;              // метка перед инструкцией (может быть NULL)
+  int src_file_index;
+  int src_line;
+  int src_col;
   struct Instr* next;
 } Instr;
 
@@ -2955,6 +3041,21 @@ typedef struct {
 } FunctionCode;
 
 static FunctionCode* current_fc = NULL;
+static int g_current_src_file_index = -1;
+static int g_current_src_line = 0;
+static int g_current_src_col = 0;
+
+static void clear_current_source_location(void) {
+  g_current_src_file_index = -1;
+  g_current_src_line = 0;
+  g_current_src_col = 0;
+}
+
+static void set_current_source_location(int file_index, int line, int col) {
+  g_current_src_file_index = file_index;
+  g_current_src_line = line;
+  g_current_src_col = col;
+}
 
 /* Регистры VM */
 #define SP 30
@@ -2969,6 +3070,7 @@ typedef struct {
   int is_param;
   int is_object;
   int is_array;
+  int array_length;
   int storage_offset;
   int storage_size;
 } Symbol;
@@ -3042,6 +3144,7 @@ static Symbol* add_local_symbol(SymbolTable* st, const char* name,
   char array_base[128];
   char array_decl_expr[128];
   int has_array_suffix = 0;
+  int array_length = 0;
 
   if (!st || !name) return NULL;
   strncpy(parsed_name, name, sizeof(parsed_name) - 1);
@@ -3064,6 +3167,14 @@ static Symbol* add_local_symbol(SymbolTable* st, const char* name,
   s->is_param = 0;
   s->offset = reserve_local_bytes(st, VAR_SIZE);
   s->is_array = has_array_suffix || type_is_array_name(s->type_name);
+  if (has_array_suffix) {
+    if (array_decl_expr[0]) {
+      parse_int_literal_strict(array_decl_expr, &array_length);
+    } else {
+      array_length = DEFAULT_ARRAY_ELEMS;
+    }
+  }
+  s->array_length = array_length;
   s->is_object = is_object_type(st, s->type_name);
   if (s->is_object && !s->is_array) {
     UserTypeInfo* type = find_user_type(st->analysis, s->type_name);
@@ -3103,6 +3214,8 @@ static int get_var_offset(SymbolTable* st, const char* name) {
 
 static void add_param_symbol(SymbolTable* st, const char* name, int offset,
                              const char* type_name) {
+  char array_base[128];
+  char array_decl_expr[128];
   if (!st || !name) return;
   if (find_symbol(st, name)) return;
   Symbol* s = append_symbol(st);
@@ -3111,6 +3224,12 @@ static void add_param_symbol(SymbolTable* st, const char* name, int offset,
   s->offset = offset;
   s->is_param = 1;
   s->is_array = type_is_array_name(s->type_name);
+  if (s->is_array &&
+      split_array_suffix(s->type_name, array_base, sizeof(array_base),
+                         array_decl_expr, sizeof(array_decl_expr)) &&
+      array_decl_expr[0]) {
+    parse_int_literal_strict(array_decl_expr, &s->array_length);
+  }
   s->is_object = is_object_type(st, s->type_name);
 }
 
@@ -3255,6 +3374,9 @@ static void emit_instr(Instr** head_ref, Instr** tail_ref, const char* mnemonic,
   i->src1 = src1;
   i->src2 = src2;
   i->label = label;
+  i->src_file_index = g_current_src_file_index;
+  i->src_line = g_current_src_line;
+  i->src_col = g_current_src_col;
 
   if (*tail_ref) {
     (*tail_ref)->next = i;
@@ -4789,8 +4911,8 @@ static char* func_label(const char* func, int id) {
 
 static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
                       Instr** tail, char* block_label, const char* exit_label,
-                      SymbolTable* st, CfgBuilderState* state) {
-  (void)cfg;
+                      SymbolTable* st, CfgBuilderState* state,
+                      int source_file_index) {
 
   // START / FINISH игнорируем
   // START не печатаем как блок,
@@ -4833,6 +4955,9 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
 
       trim_whitespace(stmt);
       if (stmt[0]) {
+        int src_line = op->line > 0 ? op->line : node->line;
+        int src_col = op->col > 0 ? op->col : node->col;
+        set_current_source_location(source_file_index, src_line, src_col);
         // ---------- break ----------
         if (strncmp(stmt, "break", 5) == 0) {
           if (node->next_target) {
@@ -4841,6 +4966,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
                        zero_reg(), pending_label);
             pending_label = NULL;
           }
+          clear_current_source_location();
           break;
         }
         // ===== FIX continue =====
@@ -4852,6 +4978,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
             pending_label = NULL;
           }
           // continue   :  stmts
+          clear_current_source_location();
           break;
         }
         // ========================
@@ -4859,6 +4986,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
         pending_label = generate_single_statement(
             stmt, pending_label, head, tail, exit_label, st, state,
             &block_has_return);
+        clear_current_source_location();
       }
 
       line = strtok(NULL, ";");
@@ -4874,6 +5002,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
   // 2. Если это IF/WHILE узел с true/false
   // ======================================================
   if (node->true_target && node->false_target && node->label) {
+    set_current_source_location(source_file_index, node->line, node->col);
     char lhs[64], rhs[64], op[4];
     char assign_lhs[64], assign_op[4], assign_rhs[128], cmp_op[4], cmp_rhs[64];
 
@@ -4974,6 +5103,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
 
         emit_instr(head, tail, "jmp", label_op(Lfalse), zero_reg(), zero_reg(),
                    NULL);
+        clear_current_source_location();
         return;
       }
     }
@@ -5000,6 +5130,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
           else
             emit_instr(head, tail, "jmp", label_op(Lfalse), zero_reg(),
                        zero_reg(), lbl);
+          clear_current_source_location();
           return;
         }
       }
@@ -5025,6 +5156,7 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
                    NULL);
         emit_instr(head, tail, "jmp", label_op(Lfalse), zero_reg(), zero_reg(),
                    NULL);
+        clear_current_source_location();
         return;
       }
     }
@@ -5062,8 +5194,11 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
 
       emit_instr(head, tail, "jmp", label_op(Lfalse), zero_reg(), zero_reg(),
                  NULL);
+      clear_current_source_location();
       return;
     }
+
+    clear_current_source_location();
   }
 
   // ======================================================
@@ -5157,9 +5292,24 @@ static void collect_symbols_from_stmt(SymbolTable* symtab, const char* stmt_text
 FunctionCode linearize_function(FunctionCFG* cfg, AnalysisResult* analysis,
                                 CfgBuilderState* state) {
   FunctionCode code = {0};
+  int source_file_index = -1;
   code.name = strdup(cfg->func_name ? cfg->func_name : "unknown");
   current_fc = &code;
   code.instr_count = 0;
+  clear_current_source_location();
+
+  if (analysis && cfg && cfg->source_filename) {
+    for (int i = 0; i < analysis->files_count; ++i) {
+      SourceFileInfo* sf = analysis->files[i];
+      if (sf && sf->filename && strcmp(sf->filename, cfg->source_filename) == 0) {
+        source_file_index = i;
+        break;
+      }
+    }
+  }
+  if (source_file_index < 0 && analysis && analysis->files_count == 1) {
+    source_file_index = 0;
+  }
 
   if (state) {
     state->tmp_mod_counter = 0;
@@ -5321,7 +5471,7 @@ FunctionCode linearize_function(FunctionCFG* cfg, AnalysisResult* analysis,
 
 
     gen_block(node, cfg, &head, &tail, block_label, exit_label, &symtab,
-              state);
+              state, source_file_index);
   }
 
   /* 5. Эпилог: mov sp, fp; pop fp; ret */
@@ -5358,7 +5508,8 @@ FunctionCode linearize_function(FunctionCFG* cfg, AnalysisResult* analysis,
   for (int p = 0; p < cfg->param_count; ++p) {
     int off = 8 + p * VAR_SIZE;
     add_named_entry_typed(&code.syms, cfg->params[p], cfg->param_types[p], off,
-                          is_object_type(&symtab, cfg->param_types[p]), 0, 0);
+                          is_object_type(&symtab, cfg->param_types[p]),
+                          type_is_array_name(cfg->param_types[p]), 0, 0, 0);
   }
 
   /* локальные переменные (var) */
@@ -5370,7 +5521,8 @@ FunctionCode linearize_function(FunctionCFG* cfg, AnalysisResult* analysis,
     if (strncmp(s->name, "__tmp_", 6) == 0) continue;
 
     add_named_entry_typed(&code.syms, s->name, s->type_name, s->offset,
-                          s->is_object, s->storage_offset, s->storage_size);
+                          s->is_object, s->is_array, s->array_length,
+                          s->storage_offset, s->storage_size);
   }
 
 
@@ -5553,6 +5705,7 @@ static int resolve_generated_asm_labels(const char* path) {
 
   while (fgets(line, sizeof(line), in)) {
     char raw[ASM_LINE_MAX];
+    char original[ASM_LINE_MAX];
     char body[ASM_LINE_MAX];
     char comment[ASM_LINE_MAX];
     char* trimmed;
@@ -5565,6 +5718,8 @@ static int resolve_generated_asm_labels(const char* path) {
     strncpy(raw, line, sizeof(raw) - 1);
     raw[sizeof(raw) - 1] = '\0';
     raw[strcspn(raw, "\r\n")] = '\0';
+    strncpy(original, raw, sizeof(original) - 1);
+    original[sizeof(original) - 1] = '\0';
     body[0] = '\0';
     comment[0] = '\0';
 
@@ -5584,14 +5739,14 @@ static int resolve_generated_asm_labels(const char* path) {
     }
 
     if (*trimmed == '\0' || *trimmed == '[' || *trimmed == ';') {
-      fprintf(out, "%s\n", raw);
+      fprintf(out, "%s\n", original);
       continue;
     }
 
     {
       size_t len = strlen(trimmed);
       if (len > 0 && trimmed[len - 1] == ':') {
-        fprintf(out, "%s\n", raw);
+        fprintf(out, "%s\n", original);
         continue;
       }
     }
@@ -5691,6 +5846,9 @@ static void dump_function_sym(FILE* out, FuncSyms* fs) {
 
     fprintf(out, "%s %s %d type %s", off > 0 ? "arg" : "var",
             fs->entries[i].name, off, type_token);
+    if (fs->entries[i].is_array) {
+      fprintf(out, " arr %d", fs->entries[i].array_length);
+    }
     if (fs->entries[i].is_object) {
       fprintf(out, " obj %d %d", fs->entries[i].storage_offset,
               fs->entries[i].storage_size);
@@ -5723,6 +5881,9 @@ static void dump_type_syms(FILE* out, AnalysisResult* res) {
 }
 
 void dump_function_asm(FILE* f, FunctionCode* fc) {
+  int last_src_file_index = -2;
+  int last_src_line = -1;
+  int last_src_col = -1;
   fprintf(f, "\n; ====================================\n");
   fprintf(f, "; Function: %s\n", fc->name);
   fprintf(f, "; Local space: %d bytes\n", fc->local_size);
@@ -5738,6 +5899,16 @@ void dump_function_asm(FILE* f, FunctionCode* fc) {
         print_label_definition(f, i->label);
         fprintf(f, ":\n");
       }
+    }
+
+    if (i->src_file_index >= 0 && i->src_line > 0 &&
+        (i->src_file_index != last_src_file_index ||
+         i->src_line != last_src_line || i->src_col != last_src_col)) {
+      fprintf(f, ";#src %d %d %d\n", i->src_file_index, i->src_line,
+              i->src_col);
+      last_src_file_index = i->src_file_index;
+      last_src_line = i->src_line;
+      last_src_col = i->src_col;
     }
 
     fprintf(f, "    %-7s ", i->mnemonic);
@@ -5862,6 +6033,17 @@ void generate_tac_assembly(AnalysisResult* res, const char* outfile) {
   fprintf(f, ";; TacVm13 assembly listing\n");
   if (res && res->files_count > 0 && res->files[0])
     fprintf(f, ";; source: %s\n\n", res->files[0]->filename);
+  if (res) {
+    for (int i = 0; i < res->files_count; ++i) {
+      SourceFileInfo* sf = res->files[i];
+      if (sf && sf->filename) {
+        fprintf(f, ";; source-file %d %s\n", i, sf->filename);
+      }
+    }
+    if (res->files_count > 0) {
+      fprintf(f, "\n");
+    }
+  }
   fprintf(f, "[section ram, code]\n\n");
 
   dump_type_syms(sym, res);

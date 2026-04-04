@@ -1,0 +1,15 @@
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\bin\Debug\net8.0\SpoInspector.exe
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\bin\Debug\net8.0\SpoInspector.deps.json
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\bin\Debug\net8.0\SpoInspector.runtimeconfig.json
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\bin\Debug\net8.0\SpoInspector.dll
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\bin\Debug\net8.0\SpoInspector.pdb
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.GeneratedMSBuildEditorConfig.editorconfig
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.AssemblyInfoInputs.cache
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.AssemblyInfo.cs
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.csproj.CoreCompileInputs.cache
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.sourcelink.json
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.dll
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\refint\SpoInspector.dll
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.pdb
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\SpoInspector.genruntimeconfig.cache
+D:\ITMO\СПО\SPO 3\tools\SpoInspector\obj\Debug\net8.0\ref\SpoInspector.dll

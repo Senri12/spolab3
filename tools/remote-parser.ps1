@@ -115,12 +115,21 @@ try {
         throw "Failed to download generated assembly"
     }
 
+    $symOutput = "$asmPath.sym"
+    & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteAsmPath.sym" $symOutput | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Failed to download generated sym file to $symOutput"
+    }
+
     & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteDgmlPath" $dgmlPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to download parse tree DGML"
     }
 
     Write-Host "Assembly written to $asmPath"
+    if (Test-Path -LiteralPath $symOutput) {
+        Write-Host "Symbols written to $symOutput"
+    }
     Write-Host "Parse tree written to $dgmlPath"
 }
 finally {

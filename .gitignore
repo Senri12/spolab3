@@ -25,3 +25,5 @@ desktop.ini
 
 # Generated top-level build outputs
 /build/
+/.claude/
+/.dotnet-cli/

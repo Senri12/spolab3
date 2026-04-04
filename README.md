@@ -7,9 +7,10 @@
 ```text
 simpleLang source
 -> remote-parser.ps1
--> asm + dgml
+-> asm + dgml + sym
 -> remotetasks-assemble.ps1
--> ptptb
+-> ptptb + embedded inspector metadata
+-> remotetasks-inspect.ps1
 -> remotetasks-run.ps1
 ```
 
@@ -21,11 +22,15 @@ simpleLang source
 - runtime I/O:
   - `src/runtime/in.asm`
   - `src/runtime/out.asm`
+- inspector:
+  - `tools/SpoInspector/Program.cs`
+  - `tools/remotetasks-inspect.ps1`
 
 ## Основные документы
 
 - `TESTING.md` - команды для проверки
-- `LAB5.md` - отдельная памятка по лабораторной 5
+- `INSPECTOR.md` - запуск и команды инспектора lab 4
+- `LAB5.md` - памятка по лабораторной 5
 - `VIRTUAL_MACHINE.md` - описание `TacVm13`
 - `REMOTE_TASKS_MANAGER.md` - как используется `Portable.RemoteTasks.Manager.exe`
 - `programm.md` - текущее состояние языка и генератора
@@ -39,6 +44,18 @@ powershell -ExecutionPolicy Bypass -File .\tools\remote-parser.ps1 -InputFile .\
 powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-assemble.ps1 -AsmListing .\build\test_echo.asm -DefinitionFile .\src\TacVm13.target.pdsl -ArchName TacVm13 -BinaryOutput .\build\test_echo.ptptb
 powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-run.ps1 -BinaryFile .\build\test_echo.ptptb -DefinitionFile .\src\TacVm13.target.pdsl -RunMode InputFile -InputFile .\build\test_echo.stdin.txt -StdinRegStorage INPUT -StdoutRegStorage OUTPUT -ArchName TacVm13
 ```
+
+### Лабораторная 4: inspector
+
+`remote-parser.ps1` теперь скачивает `*.asm.sym`, а `remotetasks-assemble.ps1` встраивает в `.ptptb` debug-секцию `simplelang.debug.json`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\remote-parser.ps1 -InputFile .\src\test.txt -AsmOutput .\build\inspect_test.asm -ParseTreeOutput .\build\inspect_test.dgml -RemoteRunTimeoutSeconds 180
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-assemble.ps1 -AsmListing .\build\inspect_test.asm -DefinitionFile .\src\TacVm13.target.pdsl -ArchName TacVm13 -BinaryOutput .\build\inspect_test.ptptb
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-inspect.ps1 -BinaryFile .\build\inspect_test.ptptb -DefinitionFile .\src\TacVm13.target.pdsl -RunMode plain
+```
+
+В REPL доступны `regs`, `disas`, `step`, `nextsrc`, `line`, `locals`, `bt`, `bline`, `dline`, `breaks`, `cont`, `quit`.
 
 ### Лабораторная 5
 
