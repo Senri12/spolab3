@@ -5996,6 +5996,9 @@ static void append_runtime_asm(FILE* out) {
   static const char* runtime_files[] = {
       "src/runtime/in.asm",
       "src/runtime/out.asm",
+      "src/runtime/pipe_in.asm",
+      "src/runtime/pipe_out.asm",
+      "src/runtime/timer.asm",
       NULL,
   };
 

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SpoInspector")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+346f3dcc41c235dd40e11fe7ecb16349732b2548")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+043b5ac92a89697847bb5508a7d6aeb255c3df97")]
 [assembly: System.Reflection.AssemblyProductAttribute("SpoInspector")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SpoInspector")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

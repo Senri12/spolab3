@@ -18,6 +18,10 @@ desktop.ini
 *.pdb
 *.ilk
 
+# .NET local build artifacts
+**/bin/
+**/obj/
+
 # Generated callgraph / temp output
 /cfg_callgraph*.dgml
 /cfg_callgraph*.ext

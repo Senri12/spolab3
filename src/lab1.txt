@@ -1,0 +1,423 @@
+int taskCount() {
+    return 21;
+}
+
+int rrQuantum() {
+    return 1;
+}
+
+int gapAfter(int idx) {
+    if (idx == 19) {
+        return 5;
+    }
+
+    if (idx % 4 == 0) {
+        return 5;
+    }
+
+    return 4;
+}
+
+int burstFor(int idx) {
+    int x = 0;
+
+    x = idx * 5;
+    x = x + 1;
+    x = x % 4;
+    x = x + 3;
+    return x;
+}
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printScaled100(int value) {
+    int whole = 0;
+    int frac = 0;
+
+    whole = value / 100;
+    printInt(whole);
+    pipeOut('.');
+
+    frac = whole * 100;
+    frac = value - frac;
+    if (frac < 10) {
+        pipeOut('0');
+    }
+    printInt(frac);
+}
+
+void printHeaderSPN() {
+    pipeOut('A'); pipeOut('L'); pipeOut('G'); pipeOut('='); pipeOut('S'); pipeOut('P'); pipeOut('N'); pipeOut('\n');
+    pipeOut('T'); pipeOut('R'); pipeOut('A'); pipeOut('C'); pipeOut('E'); pipeOut('='); pipeOut('\n');
+}
+
+void printHeaderRR1() {
+    pipeOut('A'); pipeOut('L'); pipeOut('G'); pipeOut('='); pipeOut('R'); pipeOut('R'); pipeOut('1'); pipeOut('\n');
+    pipeOut('T'); pipeOut('R'); pipeOut('A'); pipeOut('C'); pipeOut('E'); pipeOut('='); pipeOut('\n');
+}
+
+void setupTask(int idx, int arrival, int burst) {
+    setTaskArrival(idx, arrival);
+    setTaskBurst(idx, burst);
+    setTaskRemaining(idx, burst);
+    setTaskState(idx, 0);
+    setTaskCompletion(idx, -1);
+}
+
+void initTaskTable() {
+    int i = 0;
+    int arrival = 0;
+    int burst = 0;
+    int count = 0;
+    int gap = 0;
+
+    count = taskCount();
+    i = 0;
+    arrival = 0;
+    while (i < count) {
+        burst = burstFor(i);
+        setupTask(i, arrival, burst);
+        if (i + 1 < count) {
+            gap = gapAfter(i);
+            arrival = arrival + gap;
+        }
+        i = i + 1;
+    }
+}
+
+void clearQueue() {
+    setSchedQueueHead(0);
+    setSchedQueueTail(0);
+    setSchedQueueCount(0);
+}
+
+void enqueue(int task) {
+    int tail = 0;
+    int count = 0;
+
+    tail = schedQueueTail();
+    setQueueEntry(tail, task);
+
+    tail = tail + 1;
+    if (tail >= 32) {
+        tail = 0;
+    }
+    setSchedQueueTail(tail);
+
+    count = schedQueueCount();
+    count = count + 1;
+    setSchedQueueCount(count);
+}
+
+int dequeue() {
+    int count = 0;
+    int head = 0;
+    int value = -1;
+
+    count = schedQueueCount();
+    if (count <= 0) {
+        return -1;
+    }
+
+    head = schedQueueHead();
+    value = queueEntry(head);
+
+    head = head + 1;
+    if (head >= 32) {
+        head = 0;
+    }
+    setSchedQueueHead(head);
+
+    count = count - 1;
+    setSchedQueueCount(count);
+    return value;
+}
+
+void admitTasksRR(int now) {
+    int i = 0;
+    int count = 0;
+    int state = 0;
+    int arrival = 0;
+
+    count = taskCount();
+    i = 0;
+    while (i < count) {
+        state = taskState(i);
+        if (state == 0) {
+            arrival = taskArrival(i);
+            if (arrival <= now) {
+                setTaskState(i, 1);
+                enqueue(i);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+void admitTasksSPN(int now) {
+    int i = 0;
+    int count = 0;
+    int state = 0;
+    int arrival = 0;
+
+    count = taskCount();
+    i = 0;
+    while (i < count) {
+        state = taskState(i);
+        if (state == 0) {
+            arrival = taskArrival(i);
+            if (arrival <= now) {
+                setTaskState(i, 1);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+int pickSPN() {
+    int i = 0;
+    int count = 0;
+    int best = -1;
+    int bestBurst = 9999;
+    int state = 0;
+    int burst = 0;
+
+    count = taskCount();
+    i = 0;
+    while (i < count) {
+        state = taskState(i);
+        if (state == 1) {
+            burst = taskBurst(i);
+            if (burst < bestBurst) {
+                bestBurst = burst;
+                best = i;
+            }
+        }
+        i = i + 1;
+    }
+
+    return best;
+}
+
+void emitTrace(int task) {
+    if (task < 0) {
+        pipeOut('_');
+    }
+    else {
+        pipeOut(task + 'A');
+    }
+}
+
+int report() {
+    int i = 0;
+    int count = 0;
+    int arrival = 0;
+    int burst = 0;
+    int completion = 0;
+    int turnaround = 0;
+    int waiting = 0;
+    int sumTa = 0;
+    int sumWt = 0;
+    int scaled = 0;
+    int rounder = 0;
+
+    count = taskCount();
+    rounder = count / 2;
+
+    i = 0;
+    while (i < count) {
+        arrival = taskArrival(i);
+        burst = taskBurst(i);
+        completion = taskCompletion(i);
+        turnaround = completion - arrival;
+        waiting = turnaround - burst;
+        sumTa = sumTa + turnaround;
+        sumWt = sumWt + waiting;
+        i = i + 1;
+    }
+
+    pipeOut('A'); pipeOut('V'); pipeOut('G'); pipeOut('_'); pipeOut('T'); pipeOut('A'); pipeOut('=');
+    scaled = sumTa * 100;
+    scaled = scaled + rounder;
+    scaled = scaled / count;
+    printScaled100(scaled);
+    pipeOut('\n');
+
+    pipeOut('A'); pipeOut('V'); pipeOut('G'); pipeOut('_'); pipeOut('W'); pipeOut('T'); pipeOut('=');
+    scaled = sumWt * 100;
+    scaled = scaled + rounder;
+    scaled = scaled / count;
+    printScaled100(scaled);
+    pipeOut('\n');
+
+    return sumTa;
+}
+
+int simulateRR1() {
+    int time = 0;
+    int finished = 0;
+    int current = -1;
+    int quantum = 0;
+    int rem = 0;
+    int count = 0;
+    int sumWt = 0;
+    int quantumLimit = 0;
+
+    count = taskCount();
+    quantumLimit = rrQuantum();
+    clearQueue();
+
+    while (finished < count) {
+        waitForTick();
+
+        admitTasksRR(time);
+
+        if (current < 0) {
+            current = dequeue();
+            if (current >= 0) {
+                setTaskState(current, 2);
+                quantum = 0;
+            }
+        }
+
+        emitTrace(current);
+
+        if (current >= 0) {
+            rem = taskRemaining(current);
+            rem = rem - 1;
+            setTaskRemaining(current, rem);
+            quantum = quantum + 1;
+        }
+
+        time = time + 1;
+
+        if (current >= 0) {
+            if (rem <= 0) {
+                setTaskState(current, 3);
+                setTaskCompletion(current, time);
+                finished = finished + 1;
+                current = -1;
+                quantum = 0;
+            }
+            else {
+                if (quantum >= quantumLimit) {
+                    setTaskState(current, 1);
+                    enqueue(current);
+                    current = -1;
+                    quantum = 0;
+                }
+            }
+        }
+    }
+
+    pipeOut('\n');
+    sumWt = report();
+    return sumWt;
+}
+
+int simulateSPN() {
+    int time = 0;
+    int finished = 0;
+    int current = -1;
+    int rem = 0;
+    int count = 0;
+    int sumWt = 0;
+
+    count = taskCount();
+
+    while (finished < count) {
+        waitForTick();
+
+        admitTasksSPN(time);
+
+        if (current < 0) {
+            current = pickSPN();
+            if (current >= 0) {
+                setTaskState(current, 2);
+            }
+        }
+
+        emitTrace(current);
+
+        if (current >= 0) {
+            rem = taskRemaining(current);
+            rem = rem - 1;
+            setTaskRemaining(current, rem);
+        }
+
+        time = time + 1;
+
+        if (current >= 0) {
+            if (rem <= 0) {
+                setTaskState(current, 3);
+                setTaskCompletion(current, time);
+                finished = finished + 1;
+                current = -1;
+            }
+        }
+    }
+
+    pipeOut('\n');
+    sumWt = report();
+    return sumWt;
+}
+
+void printBest(int spnTa, int rrTa) {
+    pipeOut('C'); pipeOut('R'); pipeOut('I'); pipeOut('T'); pipeOut('='); pipeOut('T'); pipeOut('A'); pipeOut('\n');
+    pipeOut('B'); pipeOut('E'); pipeOut('S'); pipeOut('T'); pipeOut('=');
+    if (spnTa <= rrTa) {
+        pipeOut('S'); pipeOut('P'); pipeOut('N');
+    }
+    else {
+        pipeOut('R'); pipeOut('R'); pipeOut('1');
+    }
+    pipeOut('\n');
+}
+
+int main() {
+    int rrTa = 0;
+    int spnTa = 0;
+
+    pipeOut('V'); pipeOut('A'); pipeOut('R'); pipeOut('='); pipeOut('1'); pipeOut('1'); pipeOut('\n');
+
+    initTimer();
+
+    initTaskTable();
+    printHeaderSPN();
+    spnTa = simulateSPN();
+    pipeOut('\n');
+
+    initTaskTable();
+    printHeaderRR1();
+    rrTa = simulateRR1();
+    pipeOut('\n');
+
+    printBest(spnTa, rrTa);
+    return 0;
+}

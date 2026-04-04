@@ -90,10 +90,27 @@ internal static class Program
         var definitionPath = options.RequirePath("definition");
         var ptptb = PtptbBinary.Load(binaryPath);
         var sectionName = options.Get("section-name", DebugSectionName);
-        var sectionBytes = ptptb.GetCustomSection(sectionName)
-            ?? throw new InvalidOperationException($"Custom debug section '{sectionName}' was not found in {binaryPath}.");
-        var metadata = JsonSerializer.Deserialize<DebugMetadata>(sectionBytes, JsonOptions)
-            ?? throw new InvalidOperationException("Failed to deserialize embedded debug metadata.");
+        var sectionBytes = ptptb.GetCustomSection(sectionName);
+        DebugMetadata metadata;
+        if (sectionBytes is null)
+        {
+            Console.WriteLine($"[warn] Debug section '{sectionName}' not found — using empty metadata (raw ASM mode).");
+            metadata = new DebugMetadata
+            {
+                Format = "simplelang-debug-v1",
+                InstructionSizeBytes = 8,
+                PreferredCodeBank = "ram",
+                SourceFiles = [],
+                Segments = [],
+                Functions = [],
+                Types = []
+            };
+        }
+        else
+        {
+            metadata = JsonSerializer.Deserialize<DebugMetadata>(sectionBytes, JsonOptions)
+                ?? throw new InvalidOperationException("Failed to deserialize embedded debug metadata.");
+        }
 
         var launch = new DebugLaunchOptions
         {
@@ -1307,12 +1324,6 @@ internal sealed class InspectorSession : IDisposable
             return;
         }
 
-        if (count <= 1)
-        {
-            return;
-        }
-
-        count--;
         for (var i = 0; i < count; i++)
         {
             var result = _client.StepInstruction();
@@ -1407,8 +1418,12 @@ internal sealed class InspectorSession : IDisposable
         var ip = GetRegister(registers, _launch.IpRegisterName);
         if (_breakpoints.Contains(ip))
         {
-            Console.WriteLine($"Already stopped at breakpoint {FormatHex(ip)}.");
-            return;
+            // Step past the breakpoint instruction, then continue normally
+            var stepResult = _client.StepInstruction();
+            if (HandleExecutionResult(stepResult))
+            {
+                return;
+            }
         }
 
         var result2 = _client.Continue();

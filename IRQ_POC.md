@@ -1,226 +1,230 @@
 # IRQ / Interrupt Investigation — TacVm13 (Lab 1 Scheduler)
 
-## Цель
-Разобраться, как работают прерывания в TacVm13, чтобы реализовать планировщик задач на основе таймера.
+## Архитектурный вывод (ПОДТВЕРЖДЕНО ТЕСТАМИ)
+
+**TacVm13 использует polling-модель через `NextInterrupt`:**
+1. Установить `[1000216] = 1` (QueueInterrupts)
+2. Установить `[1000212] = 1` (InterruptsAllowed)
+3. Читать `[1000240]` → **БЛОКИРУЕТСЯ** до прихода прерывания от Clock → возвращает **1**
+4. Обработать прерывание (шаг планировщика)
+5. Повторить с шага 3 (возможно, нужно снова установить InterruptsAllowed)
+
+Это **не auto-dispatch**. CPU не прерывается аппаратно. Вместо этого — программный blocking poll.
+
+### Доказательство (irq_next_probe.asm + inspector):
+- После `step 7` ip застрял на 0x30 (инструкция `mov r1, [1000240]` не продвинулась) — БЛОКИРУЕТСЯ
+- После `cont` (свободный запуск): программа дошла до breakpoint 0x40, **r1 = 0x1** ✓
+- Clock с CyclesSignalPeriod=1000 разблокировал NextInterrupt примерно через 1000 циклов
 
 ---
 
-## Архитектура прерываний TacVm13
+## MMIO Layout — полная спецификация
 
-### Ключевые отличия от StackVM
-- **TacVm13 не имеет** CPU-уровневых хранилищ `S_IRQ_HANDLER` / `S_IRQ_ENABLED`.
-- Всё управление прерываниями — через MMIO устройств **SimplePic** и **SimpleClock**.
-- `iret` идентичен `ret`: `ip = ram:4[sp]; sp = sp + 4` (просто всплывает адрес возврата).
-- `halt`: `ip = ip + 8` (framework останавливает VM по этому мнемонику).
+### SimplePic state (base PIC_BASE = 1000200, Length=48)
 
-### Инструкции адресации
-- `mov r, [addr]` (`mov_ra`) — берёт **20-битный немедленный адрес**, не регистр!
-- `mov r, [reg + offset]` (`mov_rm`) — регистровая адресация с константным смещением.
-  - Вариант `[reg + 0]` работает как регистровый косвенный.
-- `beq`/`bgt` смотрят на `cmp_result`, а не на ALU-результат. После `sub` нужен явный `cmp`.
+| Byte offset | Address  | Type | Field                         | Описание |
+|-------------|----------|------|-------------------------------|----------|
+| +0          | 1000200  | u8   | InterruptedInstructionAddress | Адрес прерванной инструкции (пишется устройством при прерывании) |
+| +8          | 1000208  | i4   | InterruptHandlersTableEntrySize | Инициализируется из параметра HandlersTableEntrySize |
+| +12         | 1000212  | b    | **InterruptsAllowed**         | 1 = разрешить прерывания; 0 = отложить |
+| +16         | 1000216  | b    | **QueueInterrupts**           | 1 = ставить в очередь; 0 = игнорировать |
+| +20         | 1000220  | b    | InterruptHappened             | Устанавливается устройством; нужно вручную сбросить |
+| +24         | 1000224  | i4   | DeviceTypeId                  | Id типа устройства-источника |
+| +28         | 1000228  | i4   | DeviceId                      | Id устройства-источника |
+| +32         | 1000232  | i4   | SignalId                      | Id сигнала |
+| +36         | 1000236  | i4   | InterruptId                   | Id прерывания |
+| +40         | **1000240** | bool | **NextInterrupt**          | **Blocking In Register**: блокируется до прихода прерывания → возвращает nonzero |
 
----
+### SimplePic handlers-map (base 1000300, Length=64, HandlersTableEntrySize=4)
 
-## MMIO Layout (из TacVm13.irq-debug.devices.xml)
-
-### SimplePic — base: 1000200, Length=48 (BankName=ram, Mode=RAM)
-| Offset | Адрес   | Поле                          |
-|--------|---------|-------------------------------|
-| +0     | 1000200 | InterruptedInstructionAddress |
-| +4     | 1000204 | ?                             |
-| +8     | 1000208 | ?                             |
-| +12    | 1000212 | **InterruptsAllowed** (пишем 1 чтобы включить) |
-| +16    | 1000216 | **QueueInterrupts** (режим очереди) |
-| +20    | 1000220 | InterruptHappened             |
-| +24..  | 1000224+| ? (нужно выяснить через scan) |
-
-### SimplePic Handlers Map — base: 1000300, Length=64, HandlersTableEntrySize=4
-| Offset | Адрес   | Поле |
+| Offset | Address | Поле |
 |--------|---------|------|
-| +0     | 1000300 | Handler for interrupt 0 (4 bytes = адрес функции) |
+| +0     | 1000300 | Handler for interrupt 0 (4 bytes = адрес функции в `codeRamBank`) |
 | +4     | 1000304 | Handler for interrupt 1 |
 | ...    | ...     | ... |
 
-### SimpleClock — base: 1000400, Length=72
-- `CyclesSignalPeriod=1000` — каждые 1000 циклов посылает сигнал `on-cycles` → Interrupt line 0.
-- Значит: каждые ~1000 инструкций должен срабатывать прерыватель.
+### SimpleClock state (base 1000400, Length=72)
+
+| Offset | Address | Type | Field |
+|--------|---------|------|-------|
+| +0     | 1000400 | i8   | Ticks |
+| +8     | 1000408 | i8   | UnixTime |
+| +16    | 1000416 | i4   | DayOfYear |
+| +20    | 1000420 | i4   | Year |
+| +24    | 1000424 | i4   | Month |
+| +28    | 1000428 | i4   | Day |
+| +32    | 1000432 | i4   | Hour |
+| +36    | 1000436 | i4   | Minute |
+| +40    | 1000440 | i4   | Second |
+| +44    | 1000444 | i4   | Millisecond |
+| +48    | 1000448 | u8   | **Cycles** (счётчик исполненных инструкций) |
+| +56    | 1000456 | i8   | TicksSignalPeriod |
+| +64    | 1000464 | u8   | **CyclesSignalPeriod** (0=выкл; N=каждые N инструкций) |
+
+---
+
+## Сравнение с примером (StackVM)
+
+| Аспект | Example (StackVM) | Наш (TacVm13) |
+|--------|-------------------|---------------|
+| HandlersTableEntrySize | 8 | 4 |
+| PIC BankName | DATA | ram |
+| Clock CyclesSignalPeriod | 500 | 1000 |
+| CPU-уровневый S_IRQ_HANDLER | Нет (тоже) | Нет |
+| Auto-dispatch работает | Неизвестно | **Не работает** (тесты) |
+| NextInterrupt | Должен работать | **Тестируем** |
+
+**Важное отличие**: В примере PIC handlers-map в банке `DATA`, а `codeRamBankName=CODE`. Это разные банки! В TacVm13 всё в одном банке `ram`. Это потенциальная причина почему auto-dispatch не работает у нас — возможно, механизм ожидает отдельный code bank.
 
 ---
 
 ## Что было проверено (хронология)
 
-### 1. Auto-dispatch (автоматическая диспетчеризация)
-**Гипотеза:** SimplePic видит сигнал от Clock и сам переключает IP на адрес обработчика.
-
-**Код (irq_handler_once.asm):**
+### 1. Auto-dispatch (irq_handler_once.asm)
 ```asm
-mov [1000300], irq_handler   ; handler addr -> slot 0
+mov [1000300], irq_handler   ; handler addr
+mov [1000216], #1            ; QueueInterrupts = 1
 mov [1000212], #1            ; InterruptsAllowed = 1
-mov r2, #5000000
-spin:
-    sub r2, r2, #1
-    bgt spin
-halt
+spin: sub r2, r2, #1 / bgt spin / halt
+irq_handler: mov [200000], #1 / halt
+```
+**Результат**: Infinite spin — 3+ минуты, handler NOT called. 5M countdown — завершился за ~3с (timeout, не handler).
+**Вывод**: Auto-dispatch НЕ РАБОТАЕТ для TacVm13.
 
-irq_handler:
-    mov [200000], #1
+### 2. Polling [1000220] без QueueInterrupts
+**Результат**: ЗАВИСАНИЕ — поле никогда не становится ненулевым.
+
+### 3. Polling [1000240] только с QueueInterrupts=1 (без InterruptsAllowed)
+```asm
+; irq_queue_probe: только QueueInterrupts=1, InterruptsAllowed НЕ установлен
+mov r1, [1000240]   ; читает 5 раз, каждый раз = 0
+```
+**Результат**: [200000]=5, без зависания → NextInterrupt возвращает 0 немедленно.
+**Вывод**: Без InterruptsAllowed=1 очередь не заполняется. NextInterrupt не блокирует.
+
+### 4. PIC state scan (текущий irq_poc_interrupt.asm)
+**Результат**: ОШИБКА `Uninitialized memory region access at 0xf4308`
+**Причина**: `0xf4308` hex = `1000200` dec = PIC base. Попытка ЧИТАТЬ Duplex Register до того как устройство или код туда что-то записал. Mode="RAM" — регион в обычной RAM, нужна запись перед чтением.
+
+---
+
+## Ключевые правила
+
+1. **Mode="RAM" MMIO**: ЧИТАТЬ поле можно только после того как туда записано значение (устройством или кодом).
+2. **Blocking In Register** (NextInterrupt): читать безопасно всегда — устройство обрабатывает напрямую, не через RAM backing.
+3. **Нужны оба флага**: QueueInterrupts=1 И InterruptsAllowed=1 для работы NextInterrupt blocking.
+4. **InterruptsAllowed сбрасывается**: "is being reset on interrupt" — возможно, нужно переустанавливать после каждого NextInterrupt.
+5. **`beq` / `bgt`**: работают через `cmp_result`, не ALU. После `sub` нужен явный `cmp r, #0`.
+6. **`[reg]`**: не работает. Использовать `[reg + 0]` (mov_rm).
+7. **`iret` = `ret`**: просто pop ip from stack. Для scheduler — полезно для context switch.
+
+---
+
+## Следующий тест: irq_next_probe.asm
+
+Файл: `src/irq_next_probe.asm`
+
+```asm
+start:
+    mov sp, #1040000 / mov fp, sp
+    mov [200000], #0 / mov [200004], #0
+    
+    mov [1000216], #1    ; QueueInterrupts = 1
+    mov [1000212], #1    ; InterruptsAllowed = 1
+    
+    mov r1, [1000240]    ; БЛОКИРУЕТСЯ до Clock (каждые 1000 инструкций)
+    
+    mov [200000], r1     ; ожидаемый результат: nonzero
+    mov [200004], #1     ; маркер достижения halt
     halt
 ```
-**Результат (infinite spin):** 3+ минуты без остановки → auto-dispatch **не работает**.
-**Результат (5M countdown):** Завершилась за ~3 сек → timeout, [200000]=0.
+
+**Ожидаемые результаты:**
+| [200000] | [200004] | Что произошло |
+|----------|----------|---------------|
+| nonzero  | 1        | ✓ NextInterrupt blocking РАБОТАЕТ! |
+| 0        | 1        | NextInterrupt вернул 0 (неверная настройка?) |
+| VM зависает | - | NextInterrupt блокирует, но Clock не приходит |
 
 ---
 
-### 2. Polling [1000220] (InterruptHappened) без QueueInterrupts
-**Гипотеза:** Поле 1000220 становится ненулевым когда Clock срабатывает.
-
-**Результат:** **ЗАВИСАНИЕ** — поле никогда не меняется без `QueueInterrupts=1`.
-
----
-
-### 3. Polling [1000240] с QueueInterrupts=1
-**Гипотеза:** С очередью прерываний поле 1000240 содержит ID прерывания.
-
-**Результат:** **ЗАВИСАНИЕ** — поле никогда не меняется.
-
----
-
-### 4. irq_queue_probe — чтение [1000240] в цикле 5 раз
-**Гипотеза:** Проверка факта работы VM и доступа к устройству.
-
-**Код (irq_queue_probe.asm):** Читает [1000240] 5 раз безусловно, считает в [200000].
-
-**Результат:** Завершился успешно ([200000]=5) — **ничего не доказывает** про прерывания, просто читает что есть. Ошибки нет потому что 1000240 = Clock MMIO (base 1000400 − 160), не PIC state.
-
----
-
-### 5. PIC state scan — снэпшот всех 12 слов MMIO
-**Гипотеза:** Снять snapshot 12 слов (1000200..1000244), включить прерывания, ждать изменений.
-
-**Код (irq_poc_interrupt.asm текущий):**
-- Читает 12 × 4 байта из 1000200..1000244 в [201000..201044]
-- Включает InterruptsAllowed=1 и QueueInterrupts=1
-- В 10M-итерационном цикле проверяет каждое слово на изменение
-- При изменении: пишет (offset+1) в [200000], halt
-- При timeout: [200000]=0, halt
-
-**Результат:** **ОШИБКА** — `Uninitialized memory region access at 0xf4308`
-
-**Причина диагностирована:**
-- `0xf4308` hex = `1000200` decimal — первое чтение из PIC MMIO.
-- `Mode="RAM"` в devices.xml: регион — обычная RAM, используемая устройством как backing store.
-- VM ругается на чтение RAM до первой записи ("uninitialized memory region").
-- **Нельзя читать MMIO до того как устройство или наш код туда что-то записал.**
-
----
-
-## Ключевые выводы
-
-| # | Вывод |
-|---|-------|
-| 1 | **Mode="RAM"**: MMIO-регион не инициализирован при старте, читать нельзя до записи |
-| 2 | **Auto-dispatch не работает** — SimplePic не переключает IP самостоятельно |
-| 3 | **QueueInterrupts нужен** — без него InterruptHappened не меняется |
-| 4 | **Polling [1000220] и [1000240]** не даёт результата при простом spinning |
-| 5 | **`beq` после `sub`** — нужен явный `cmp r, #0` перед `beq` |
-| 6 | **`[reg]`** не работает — нужно `[reg + 0]` (`mov_rm`) |
-
----
-
-## Следующие шаги (план)
-
-### Fix scan теста: Zero-init перед snapshot
-
-Перед snap_loop добавить zero-init чтобы избежать "uninitialized" ошибки:
+## План для планировщика (после подтверждения NextInterrupt)
 
 ```asm
-; zero-init PIC state region before reading
-mov r6, #1000200
-zero_loop:
-    mov [r6 + 0], #0
-    add r6, r6, #4
-    cmp r6, #1000248
-    blt zero_loop
-; теперь snap_loop прочтёт нули — snapshot будет нулями
-; потом включаем прерывания и ждём изменений
+scheduler_loop:
+    ; Wait for next timer tick (every 1000 cycles)
+    mov r1, [1000240]      ; block until Clock fires
+    
+    ; Re-enable for next interrupt (if InterruptsAllowed resets on interrupt)
+    mov [1000212], #1
+    
+    ; --- context switch ---
+    ; 1. Save current thread context (all registers to thread TCB)
+    ; 2. Advance to next thread (round-robin)
+    ; 3. Restore next thread context
+    ; 4. Jump to next thread's saved IP
+    jmp scheduler_loop
 ```
-
-После этого: если что-то ненулевое появится в PIC MMIO → мы найдём какое поле.
-
-### Альтернативный подход: Disable snapshot, только poll
-
-1. Записать нули / init значения в PIC state
-2. Включить прерывания (`[1000212]=1`)
-3. Polling каждого поля в цикле, ждать non-zero
-
-### Гипотезы для проверки
-
-1. **Write→Read**: После zero-init MMIO можно читать → запустить scan → узнать какое поле меняется.
-2. **SimplePic dispatch через iret**: Может SimplePic вызывает обработчик через механизм стека (пушит IP и прыгает на handler), а `iret` (= `ret`) возвращает управление? Тогда обработчик должен завершаться через `iret`, не `halt`.
-3. **Handler table format**: HandlersTableEntrySize=4 → 4-байтный адрес. Проверить что `mov [1000300], irq_handler` пишет правильный адрес.
-4. **Clock MMIO**: Нужно читать Clock state (1000400) — там может быть счётчик циклов или флаг "fired".
 
 ---
 
-## Рабочий процесс (commands)
+## Рабочий процесс
 
 ### Сборка
 ```powershell
-powershell.exe -File "./tools/remotetasks-assemble.ps1" `
-  -AsmListing "src/irq_poc_interrupt.asm" `
-  -BinaryOutput "build/irq_poc.ptptb"
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-assemble.ps1 `
+  -AsmListing src/irq_next_probe.asm -BinaryOutput build/irq_next_probe.ptptb
 ```
 
-### Запуск (quick submit + poll через PS1 файл)
+### Запуск (quick submit + poll)
 ```bash
-# Step 1: Submit (из bash, относительные пути)
+# Submit
 cd "d:/ITMO/СПО/SPO 3" && ./tools/RemoteTasks/Portable.RemoteTasks.Manager.exe \
-  -sslcfg ./tools/RemoteTasks/ssl-cfg.yaml -ul 505979 -up 9d7a3ade-42cd-4693-85e6-5367bbe31597 \
+  -sslcfg ./tools/RemoteTasks/ssl-cfg.yaml -ul 505979 -up 9d7a3ade-... \
   -q -s ExecuteBinaryWithIo \
   devices.xml src/TacVm13.irq-debug.devices.xml \
-  definitionFile src/TacVm13.target.pdsl \
-  archName TacVm13 \
-  binaryFileToRun build/irq_poc.ptptb \
+  definitionFile src/TacVm13.target.pdsl archName TacVm13 \
+  binaryFileToRun build/irq_next_probe.ptptb \
   codeRamBankName ram ipRegStorageName ip finishMnemonicName halt
 ```
 
+### Отладка с инспектором
 ```powershell
-# Step 2: Poll result — через temp PS1 файл (чтобы избежать encoding багов с Кириллицей)
-# Записать в C:/Users/shabu/AppData/Local/Temp/poll_irq.ps1:
-Set-Location "D:\ITMO\СПО\SPO 3"
-$mgr = ".\tools\RemoteTasks\Portable.RemoteTasks.Manager.exe"
-$ssl = ".\tools\RemoteTasks\ssl-cfg.yaml"
-$out = & $mgr -sslcfg $ssl -ul 505979 -up 9d7a3ade-42cd-4693-85e6-5367bbe31597 -g <taskId> 2>&1
-Write-Host ($out | Out-String)
-
-# Выполнить:
-powershell.exe -File "C:/Users/shabu/AppData/Local/Temp/poll_irq.ps1"
+powershell -ExecutionPolicy Bypass -File .\tools\remotetasks-inspect.ps1 `
+  -BinaryFile .\build\irq_next_probe.ptptb `
+  -DefinitionFile .\src\TacVm13.target.pdsl `
+  -RunMode withio `
+  -DevicesFile .\src\TacVm13.irq-debug.devices.xml
 ```
+Затем в REPL: `step` до инструкции `mov r1, [1000240]`, потом `step` снова и смотреть — завис ли или сразу вернул значение.
 
-### Скачать бинарь
+### Polling результата (через PS1 файл из-за Cyrillic-path бага)
 ```powershell
+# Сохранить в C:/Users/shabu/AppData/Local/Temp/poll.ps1:
 Set-Location "D:\ITMO\СПО\SPO 3"
 $mgr = ".\tools\RemoteTasks\Portable.RemoteTasks.Manager.exe"
 $ssl = ".\tools\RemoteTasks\ssl-cfg.yaml"
-& $mgr -sslcfg $ssl -ul 505979 -up 9d7a3ade-42cd-4693-85e6-5367bbe31597 `
-  -g <taskId> -r out.ptptb -o build/irq_poc.ptptb
+$id  = "<taskId>"
+& $mgr -sslcfg $ssl -ul 505979 -up 9d7a3ade-... -g $id 2>&1 | Write-Host
+
+# Запустить:
+powershell.exe -File "C:/Users/shabu/AppData/Local/Temp/poll.ps1"
 ```
 
 ### Важные баги с Manager.exe
-- `-w` флаг зависает при вызове из bash → использовать `-q` + `-g` polling.
-- Кириллица `СПО` ломается при передаче через bash→PowerShell inline → сохранять команду в `.ps1` файл и `powershell.exe -File`.
-- После зависания: `Get-Process -Name 'Portable.RemoteTasks.Manager' | Stop-Process -Force`.
+- `-w` зависает из bash → использовать `-q` + `-g` polling
+- Кириллица в пути → через `.ps1` файл + Set-Location
+- После зависания: `Get-Process 'Portable.RemoteTasks.Manager' | Stop-Process -Force`
 
 ---
 
 ## Текущие файлы
 
-| Файл | Описание |
-|------|----------|
-| `src/irq_poc_interrupt.asm` | PIC scan тест — требует zero-init fix |
-| `src/irq_handler_once.asm` | Auto-dispatch probe |
-| `src/irq_queue_probe.asm` | Queue probe (ничего не доказал) |
-| `src/TacVm13.irq-debug.devices.xml` | Devices без SimplePipe (для тестов) |
-| `src/TacVm13.irq-poc.devices.xml` | Devices с SimplePipe |
-| `src/TacVm13.target.pdsl` | Архитектура TacVm13 |
-| `build/irq_poc.ptptb` | Последний бинарь (scan тест, 585 байт) |
+| Файл | Статус | Описание |
+|------|--------|----------|
+| `src/irq_next_probe.asm` | **НОВЫЙ, НЕ ТЕСТИРОВАН** | Минимальный тест NextInterrupt blocking |
+| `src/irq_handler_once.asm` | Протестирован — auto-dispatch НЕ работает | Auto-dispatch probe |
+| `src/irq_queue_probe.asm` | Протестирован — подтвердил что QueueInterrupts без InterruptsAllowed → немедленный return 0 | Queue probe |
+| `src/irq_poc_interrupt.asm` | ОШИБКА: uninitialized read | PIC scan тест (нужен zero-init fix) |
+| `src/TacVm13.irq-debug.devices.xml` | OK | Devices для тестов (без SimplePipe) |
+| `src/TacVm13.irq-poc.devices.xml` | OK | Devices с SimplePipe |
