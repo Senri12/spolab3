@@ -1,3 +1,12 @@
+// External context-switching functions (implemented in rt_ctx.asm)
+void ctxInit();
+void ctxReset();
+void ctxCreate(int func_addr, int arg);
+void ctxDispatch(int to_idx);
+void ctxYield();
+void ctxExit();
+int ctxCurrentTask();
+
 int taskCount() {
     return 21;
 }
@@ -26,6 +35,32 @@ int burstFor(int idx) {
     x = x % 4;
     x = x + 3;
     return x;
+}
+
+// Task thread body: yields once per dispatch, exits when scheduler marks done.
+// Avoid local variables — compiler generates wrong offsets for reads.
+// ctxCurrentTask() reads SCHED_STATE[0] so it always returns this thread's task idx.
+void taskBody(int dummy) {
+    while (taskState(ctxCurrentTask()) != 3) {
+        ctxYield();
+    }
+    ctxExit();
+}
+
+// Create one task thread per task (thread index = task index + 1).
+// funcAddr() in a multi-arg call generates [fp+0] (compiler bug), so store
+// the address in a local first, then pass it to ctxCreate.
+void createTaskThreads() {
+    int i = 0;
+    int count = 0;
+    int addr = 0;
+
+    addr = funcAddr(taskBody);
+    count = taskCount();
+    while (i < count) {
+        ctxCreate(addr, i);
+        i = i + 1;
+    }
 }
 
 void printInt(int x) {
@@ -96,6 +131,7 @@ void initTaskTable() {
     int burst = 0;
     int count = 0;
     int gap = 0;
+    int nextI = 0;
 
     count = taskCount();
     i = 0;
@@ -103,7 +139,8 @@ void initTaskTable() {
     while (i < count) {
         burst = burstFor(i);
         setupTask(i, arrival, burst);
-        if (i + 1 < count) {
+        nextI = i + 1;
+        if (nextI < count) {
             gap = gapAfter(i);
             arrival = arrival + gap;
         }
@@ -279,6 +316,56 @@ int report() {
     return sumTa;
 }
 
+int simulateSPN() {
+    int time = 0;
+    int finished = 0;
+    int current = -1;
+    int rem = 0;
+    int count = 0;
+    int sumWt = 0;
+
+    count = taskCount();
+    ctxReset();
+    createTaskThreads();
+
+    while (finished < count) {
+        waitForTick();
+
+        admitTasksSPN(time);
+
+        if (current < 0) {
+            current = pickSPN();
+            if (current >= 0) {
+                setTaskState(current, 2);
+            }
+        }
+
+        emitTrace(current);
+
+        if (current >= 0) {
+            ctxDispatch(current + 1);
+            rem = taskRemaining(current);
+            rem = rem - 1;
+            setTaskRemaining(current, rem);
+        }
+
+        time = time + 1;
+
+        if (current >= 0) {
+            if (rem <= 0) {
+                setTaskState(current, 3);
+                setTaskCompletion(current, time);
+                finished = finished + 1;
+                current = -1;
+            }
+        }
+    }
+
+    pipeOut('\n');
+    sumWt = report();
+    return sumWt;
+}
+
 int simulateRR1() {
     int time = 0;
     int finished = 0;
@@ -292,6 +379,8 @@ int simulateRR1() {
     count = taskCount();
     quantumLimit = rrQuantum();
     clearQueue();
+    ctxReset();
+    createTaskThreads();
 
     while (finished < count) {
         waitForTick();
@@ -309,6 +398,7 @@ int simulateRR1() {
         emitTrace(current);
 
         if (current >= 0) {
+            ctxDispatch(current + 1);
             rem = taskRemaining(current);
             rem = rem - 1;
             setTaskRemaining(current, rem);
@@ -341,53 +431,6 @@ int simulateRR1() {
     return sumWt;
 }
 
-int simulateSPN() {
-    int time = 0;
-    int finished = 0;
-    int current = -1;
-    int rem = 0;
-    int count = 0;
-    int sumWt = 0;
-
-    count = taskCount();
-
-    while (finished < count) {
-        waitForTick();
-
-        admitTasksSPN(time);
-
-        if (current < 0) {
-            current = pickSPN();
-            if (current >= 0) {
-                setTaskState(current, 2);
-            }
-        }
-
-        emitTrace(current);
-
-        if (current >= 0) {
-            rem = taskRemaining(current);
-            rem = rem - 1;
-            setTaskRemaining(current, rem);
-        }
-
-        time = time + 1;
-
-        if (current >= 0) {
-            if (rem <= 0) {
-                setTaskState(current, 3);
-                setTaskCompletion(current, time);
-                finished = finished + 1;
-                current = -1;
-            }
-        }
-    }
-
-    pipeOut('\n');
-    sumWt = report();
-    return sumWt;
-}
-
 void printBest(int spnTa, int rrTa) {
     pipeOut('C'); pipeOut('R'); pipeOut('I'); pipeOut('T'); pipeOut('='); pipeOut('T'); pipeOut('A'); pipeOut('\n');
     pipeOut('B'); pipeOut('E'); pipeOut('S'); pipeOut('T'); pipeOut('=');
@@ -407,6 +450,7 @@ int main() {
     pipeOut('V'); pipeOut('A'); pipeOut('R'); pipeOut('='); pipeOut('1'); pipeOut('1'); pipeOut('\n');
 
     initTimer();
+    ctxInit();
 
     initTaskTable();
     printHeaderSPN();
