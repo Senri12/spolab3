@@ -7,6 +7,7 @@ param(
     [switch]$SkipInspectorEmbed,
     [string]$InspectorProject = "tools/SpoInspector/SpoInspector.csproj",
     [string]$InspectorSectionName = "simplelang.debug.json",
+    [string]$InspectorArtifactsRoot = "build/spoinspector",
     [string]$TaskInfoOutput = "build/remote_tasks/last_assemble_task.txt",
     [int]$PollIntervalSeconds = 2,
     [int]$TaskTimeoutSeconds = 300,
@@ -137,6 +138,7 @@ $extraAsmPaths = Resolve-AbsolutePathList -Paths $ExtraAsmFiles
 $definitionPath = Resolve-AbsolutePath -Path $DefinitionFile -MustExist
 $binaryPath = Resolve-AbsolutePath -Path $BinaryOutput
 $inspectorProjectPath = Resolve-AbsolutePath -Path $InspectorProject -MustExist
+$inspectorArtifactsPath = Resolve-AbsolutePath -Path $InspectorArtifactsRoot
 $taskInfoPath = Resolve-AbsolutePath -Path $TaskInfoOutput
 $managerExe = Resolve-AbsolutePath -Path $ManagerPath -MustExist
 $managerBaseArgs = Get-ManagerBaseArgs -ManagerExePath $managerExe -SslCfg $SslConfig -LoginValue $Login -PasswordValue $Password
@@ -203,7 +205,11 @@ if (-not $SkipInspectorEmbed) {
     $symPath = "$asmPath.sym"
     if (Test-Path -LiteralPath $symPath) {
         $dotnetCliHome = Join-Path $projectRoot ".dotnet-cli"
+        $inspectorObjPath = Join-Path $inspectorArtifactsPath "obj"
+        $inspectorBinPath = Join-Path $inspectorArtifactsPath "bin"
         New-Item -ItemType Directory -Force -Path $dotnetCliHome | Out-Null
+        New-Item -ItemType Directory -Force -Path $inspectorObjPath | Out-Null
+        New-Item -ItemType Directory -Force -Path $inspectorBinPath | Out-Null
 
         $oldDotnetCliHome = $env:DOTNET_CLI_HOME
         $oldDotnetSkip = $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE
@@ -216,9 +222,26 @@ if (-not $SkipInspectorEmbed) {
             $env:DOTNET_NOLOGO = "1"
             $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
             $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = "false"
-            & dotnet run --project $inspectorProjectPath -- embed --binary $binaryPath --asm $asmPath --sym $symPath --section-name $InspectorSectionName
+
+            $embedOutput = & dotnet run `
+                --project $inspectorProjectPath `
+                --property:BaseIntermediateOutputPath="$inspectorObjPath\" `
+                --property:BaseOutputPath="$inspectorBinPath\" `
+                -- embed `
+                --binary $binaryPath `
+                --asm $asmPath `
+                --sym $symPath `
+                --section-name $InspectorSectionName 2>&1
+
             if ($LASTEXITCODE -ne 0) {
-                throw "Failed to embed inspector metadata into $binaryPath"
+                $embedText = ($embedOutput | Out-String).Trim()
+                Write-Warning "Failed to embed inspector metadata into $binaryPath"
+                if (-not [string]::IsNullOrWhiteSpace($embedText)) {
+                    Write-Warning $embedText
+                }
+            }
+            elseif ($embedOutput) {
+                $embedOutput | ForEach-Object { Write-Host $_ }
             }
         }
         finally {
