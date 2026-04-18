@@ -223,15 +223,27 @@ if (-not $SkipInspectorEmbed) {
             $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
             $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = "false"
 
-            $embedOutput = & dotnet run `
-                --project $inspectorProjectPath `
-                --property:BaseIntermediateOutputPath="$inspectorObjPath\" `
-                --property:BaseOutputPath="$inspectorBinPath\" `
-                -- embed `
-                --binary $binaryPath `
-                --asm $asmPath `
-                --sym $symPath `
-                --section-name $InspectorSectionName 2>&1
+            $dotnetArgs = @(
+                "run",
+                "--project", $inspectorProjectPath,
+                "--property:BaseIntermediateOutputPath=$inspectorObjPath\",
+                "--property:BaseOutputPath=$inspectorBinPath\",
+                "--",
+                "embed",
+                "--binary", $binaryPath,
+                "--asm", $asmPath,
+                "--sym", $symPath,
+                "--section-name", $InspectorSectionName
+            )
+
+            $dotnetParts = New-Object System.Collections.Generic.List[string]
+            $dotnetParts.Add((Quote-CmdArgument -Value "dotnet"))
+            foreach ($dotnetArg in $dotnetArgs) {
+                $dotnetParts.Add((Quote-CmdArgument -Value ([string]$dotnetArg)))
+            }
+
+            $dotnetCommandText = [string]::Join(' ', $dotnetParts)
+            $embedOutput = cmd /c $dotnetCommandText 2>&1
 
             if ($LASTEXITCODE -ne 0) {
                 $embedText = ($embedOutput | Out-String).Trim()
