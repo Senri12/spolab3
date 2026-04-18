@@ -6,7 +6,7 @@
     <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
       <InitialBinding StartAddress="196608" Length="128" />
     </IoPortMap>
-    <Parameter Name="PipeSpec" Value="fifo:in:build/task2_v71/q1.types200.csv:out:src/task2_v71/q1.raw.unused_0.out.txt" />
+    <Parameter Name="PipeSpec" Value="fifo:in:complete/data/q1.types200.csv:out:src/task2_v71/q1.raw.unused_0.out.txt" />
     <Parameter Name="OperationMode" Value="ByteStream" />
   </Device>
 
@@ -14,7 +14,7 @@
     <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
       <InitialBinding StartAddress="200704" Length="128" />
     </IoPortMap>
-    <Parameter Name="PipeSpec" Value="fifo:in:build/task2_v71/q1.ved200.csv:out:src/task2_v71/q1.raw.unused_1.out.txt" />
+    <Parameter Name="PipeSpec" Value="fifo:in:complete/data/q1.ved200.csv:out:src/task2_v71/q1.raw.unused_1.out.txt" />
     <Parameter Name="OperationMode" Value="ByteStream" />
   </Device>
 

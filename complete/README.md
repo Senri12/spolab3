@@ -41,8 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\complete\run_q1_raw200.ps1
 
 Используются уже подготовленные бинарные входы:
 
-- `build/task2_v71/q1.bin50.dat`
-- `build/task2_v71/q1.bin200.dat`
+- `complete/data/q1.bin50.dat`
+- `complete/data/q1.bin200.dat`
 
 Они подключены через:
 
@@ -55,8 +55,8 @@ powershell -ExecutionPolicy Bypass -File .\complete\run_q1_raw200.ps1
 
 Используется прямое чтение CSV через:
 
-- `build/task2_v71/q1.types200.csv`
-- `build/task2_v71/q1.ved200.csv`
+- `complete/data/q1.types200.csv`
+- `complete/data/q1.ved200.csv`
 
 Конфигурация устройств:
 
