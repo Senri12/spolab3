@@ -75,11 +75,7 @@ $definitionManagerPath = Convert-ToManagerPath -AbsolutePath $definitionPath
 if ($RunMode -eq "WithIo") {
     $devicesPath = Resolve-AbsolutePath -Path $DevicesFile -MustExist
     $devicesManagerPath = Convert-ToManagerPath -AbsolutePath $devicesPath
-    $withIoArgs = @()
-    if ($WithIoInteractiveSession -eq 0) {
-        $withIoArgs += "-w"
-    }
-    $withIoArgs += @("-s", "ExecuteBinaryWithIo")
+    $withIoArgs = @("-w", "-s", "ExecuteBinaryWithIo")
     if ($WithIoInteractiveSession -ne 0) {
         $withIoArgs += "-ip"
     }

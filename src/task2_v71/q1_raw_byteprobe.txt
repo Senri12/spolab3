@@ -1,0 +1,118 @@
+int pipeIn1();
+void pipeOut(int value);
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printLabelValue(int value) {
+    pipeOut('#');
+    printInt(value);
+    pipeOut('\n');
+}
+
+void initReader(int[] state) {
+    state[0] = 0;
+    state[1] = 0;
+}
+
+int readByte(int[] state) {
+    int nextWord = 0;
+    int base = 0;
+    int ch = 0;
+
+    if (state[1] == 0) {
+        state[0] = pipeIn1();
+        state[1] = 4;
+    }
+
+    nextWord = state[0] / 256;
+    base = nextWord * 256;
+    ch = state[0] - base;
+    if (ch < 0) {
+        ch = ch + 256;
+        nextWord = nextWord - 1;
+    }
+
+    state[0] = nextWord;
+    state[1] = state[1] - 1;
+    return ch;
+}
+
+void skipBom(int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+
+    b0 = readByte(state);
+    if (b0 == 239) {
+        b1 = readByte(state);
+        b2 = readByte(state);
+        return;
+    }
+}
+
+void skipHeader(int[] state) {
+    int ch = 0;
+
+    ch = readByte(state);
+    while (ch != '\n') {
+        ch = readByte(state);
+    }
+}
+
+void taskBody(int dummy) {
+    return;
+}
+
+int main() {
+    int reader[2];
+    int i = 0;
+    int ch = 0;
+
+    initReader(reader);
+    printLabelValue(7);
+    skipBom(reader);
+    printLabelValue(8);
+    skipHeader(reader);
+    printLabelValue(9);
+
+    while (i < 160) {
+        ch = readByte(reader);
+        if (ch == '\n') {
+            printLabelValue(7777);
+            return 0;
+        }
+        printLabelValue(ch);
+        i = i + 1;
+    }
+
+    printLabelValue(8888);
+
+    return 0;
+}

@@ -5997,6 +5997,8 @@ static void append_runtime_asm(FILE* out) {
       "src/runtime/in.asm",
       "src/runtime/out.asm",
       "src/runtime/pipe_in.asm",
+      "src/runtime/pipe_in0.asm",
+      "src/runtime/pipe_in1.asm",
       "src/runtime/pipe_out.asm",
       "src/runtime/timer.asm",
       "src/runtime/rt_ctx.asm",

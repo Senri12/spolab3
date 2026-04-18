@@ -9,7 +9,9 @@ param(
     [string]$RemoteHost = "localhost",
     [int]$RemotePort = 5555,
     [string]$RemoteUser = "user",
-    [string]$RemotePassword = "student"
+    [string]$RemotePassword = "student",
+    [string]$SshExe = "C:\Windows\System32\OpenSSH\ssh.exe",
+    [string]$ScpExe = "C:\Windows\System32\OpenSSH\scp.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +39,8 @@ function Resolve-AbsolutePath {
 $inputPath = Resolve-AbsolutePath -Path $InputFile -MustExist
 $asmPath = Resolve-AbsolutePath -Path $AsmOutput
 $dgmlPath = Resolve-AbsolutePath -Path $ParseTreeOutput
+$sshExePath = Resolve-AbsolutePath -Path $SshExe -MustExist
+$scpExePath = Resolve-AbsolutePath -Path $ScpExe -MustExist
 
 New-Item -ItemType Directory -Force (Split-Path -Parent $asmPath) | Out-Null
 New-Item -ItemType Directory -Force (Split-Path -Parent $dgmlPath) | Out-Null
@@ -64,17 +68,17 @@ $env:SSH_ASKPASS_REQUIRE = "force"
 $env:DISPLAY = "dummy"
 
 try {
-    & ssh -p $RemotePort $sshTarget "mkdir -p '$remoteDir/out'"
+    & $sshExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $RemotePort $sshTarget "mkdir -p '$remoteDir/out'"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create remote workdir $remoteDir"
     }
 
-    & scp -P $RemotePort -r (Join-Path $projectRoot "src") "$sshTarget`:$remoteDir/"
+    & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort -r (Join-Path $projectRoot "src") "$sshTarget`:$remoteDir/"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to upload src/ to $remoteDir"
     }
 
-    & scp -P $RemotePort $inputPath "$sshTarget`:$remoteDir/$remoteInputName"
+    & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort $inputPath "$sshTarget`:$remoteDir/$remoteInputName"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to upload input file to $remoteDir"
     }
@@ -97,31 +101,31 @@ try {
         $runCommand
     ) -join " && "
 
-    & ssh -p $RemotePort $sshTarget $remoteCommand
+    & $sshExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $RemotePort $sshTarget $remoteCommand
     $remoteExitCode = $LASTEXITCODE
 
     if ($ProgressOutput) {
         $progressPath = Resolve-AbsolutePath -Path $ProgressOutput
         New-Item -ItemType Directory -Force (Split-Path -Parent $progressPath) | Out-Null
-        & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteProgressPath" $progressPath | Out-Null
+        & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort "$sshTarget`:$remoteDir/$remoteProgressPath" $progressPath | Out-Null
     }
 
     if ($remoteExitCode -ne 0) {
         throw "Remote parser build/run failed"
     }
 
-    & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteAsmPath" $asmPath
+    & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort "$sshTarget`:$remoteDir/$remoteAsmPath" $asmPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to download generated assembly"
     }
 
     $symOutput = "$asmPath.sym"
-    & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteAsmPath.sym" $symOutput | Out-Null
+    & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort "$sshTarget`:$remoteDir/$remoteAsmPath.sym" $symOutput | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Failed to download generated sym file to $symOutput"
     }
 
-    & scp -P $RemotePort "$sshTarget`:$remoteDir/$remoteDgmlPath" $dgmlPath
+    & $scpExePath -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $RemotePort "$sshTarget`:$remoteDir/$remoteDgmlPath" $dgmlPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to download parse tree DGML"
     }

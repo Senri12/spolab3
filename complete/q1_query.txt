@@ -1,0 +1,80 @@
+int pipeIn0();
+void pipeOut(int value);
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printRow(int typeId, int chlvkId) {
+    printInt(typeId);
+    pipeOut(59);
+    printInt(chlvkId);
+    pipeOut('\n');
+}
+
+void printLabelValue(int value) {
+    pipeOut('#');
+    printInt(value);
+    pipeOut('\n');
+}
+
+int processRows() {
+    int id = 0;
+    int chlvkId = 0;
+    int tvId = 0;
+    int count = 0;
+
+    while (1) {
+        id = pipeIn0();
+        if (id == 0) {
+            break;
+        }
+
+        chlvkId = pipeIn0();
+        tvId = pipeIn0();
+
+        if (id > 1250981 && tvId == 1) {
+            printRow(1, chlvkId);
+            count = count + 1;
+        }
+    }
+
+    return count;
+}
+
+void taskBody(int dummy) {
+    return;
+}
+
+int main() {
+    int count = 0;
+    printLabelValue(7);
+    count = processRows();
+    printLabelValue(count);
+    return 0;
+}

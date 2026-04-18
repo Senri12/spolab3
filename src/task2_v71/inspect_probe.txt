@@ -1,0 +1,23 @@
+# после pipeIn1_off0 (строка 33) — смотрим control region
+bline 33
+run
+mem ram 200704 128
+regs
+
+# после pipeIn1_off4 (строка 38)
+bline 38
+cont
+mem ram 200704 128
+regs
+
+# после WR0+pipeIn1 (строка 45)
+bline 45
+cont
+mem ram 200704 128
+
+# baseline после обычного pipeIn1
+bline 50
+cont
+mem ram 200704 128
+
+cont

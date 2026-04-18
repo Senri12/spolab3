@@ -1,0 +1,189 @@
+int pipeIn1();
+void pipeOut(int value);
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printRow(int typeId, int chlvkId) {
+    printInt(typeId);
+    pipeOut(59);
+    printInt(chlvkId);
+    pipeOut('\n');
+}
+
+void printLabelValue(int value) {
+    pipeOut('#');
+    printInt(value);
+    pipeOut('\n');
+}
+
+void initReader(int[] state) {
+    state[0] = 0;
+    state[1] = 0;
+}
+
+int readByte(int[] state) {
+    int nextWord = 0;
+    int base = 0;
+    int ch = 0;
+
+    if (state[1] == 0) {
+        state[0] = pipeIn1();
+        state[1] = 4;
+    }
+
+    nextWord = state[0] / 256;
+    base = nextWord * 256;
+    ch = state[0] - base;
+    if (ch < 0) {
+        ch = ch + 256;
+        nextWord = nextWord - 1;
+    }
+
+    state[0] = nextWord;
+    state[1] = state[1] - 1;
+    return ch;
+}
+
+void skipBom(int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+
+    b0 = readByte(state);
+    if (b0 == 239) {
+        b1 = readByte(state);
+        b2 = readByte(state);
+        return;
+    }
+}
+
+void skipHeader(int[] state) {
+    int ch = 0;
+
+    ch = readByte(state);
+    while (ch != '\n') {
+        ch = readByte(state);
+    }
+}
+
+void skipToLineEnd(int[] state) {
+    int ch = 0;
+
+    ch = readByte(state);
+    while (ch != '\n') {
+        ch = readByte(state);
+    }
+}
+
+int processVed() {
+    int reader[2];
+    int ch = 0;
+    int field = 1;
+    int id = 0;
+    int chlvkId = 0;
+    int tvId = 0;
+    int rowCount = 0;
+    int count = 0;
+
+    initReader(reader);
+    skipBom(reader);
+    skipHeader(reader);
+
+    while (rowCount < 200) {
+        ch = readByte(reader);
+
+        if (ch == '\r') {
+            continue;
+        }
+
+        if (ch == ';' || ch == '\n') {
+            if (ch == '\n') {
+                if (id > 1250981 && tvId == 1) {
+                    printRow(1, chlvkId);
+                    count = count + 1;
+                }
+
+                rowCount = rowCount + 1;
+                field = 1;
+                id = 0;
+                chlvkId = 0;
+                tvId = 0;
+            }
+            else {
+                if (field == 8) {
+                    skipToLineEnd(reader);
+
+                    if (id > 1250981 && tvId == 1) {
+                        printRow(1, chlvkId);
+                        count = count + 1;
+                    }
+
+                    rowCount = rowCount + 1;
+                    field = 1;
+                    id = 0;
+                    chlvkId = 0;
+                    tvId = 0;
+                    continue;
+                }
+                field = field + 1;
+            }
+            continue;
+        }
+
+        if (ch >= '0' && ch <= '9') {
+            if (field == 1) {
+                id = id * 10;
+                id = id + ch - '0';
+            }
+            if (field == 2) {
+                chlvkId = chlvkId * 10;
+                chlvkId = chlvkId + ch - '0';
+            }
+            if (field == 8) {
+                tvId = tvId * 10;
+                tvId = tvId + ch - '0';
+            }
+        }
+    }
+
+    return count;
+}
+
+void taskBody(int dummy) {
+    return;
+}
+
+int main() {
+    int count = 0;
+    printLabelValue(7);
+    count = processVed();
+    printLabelValue(count);
+    return 0;
+}

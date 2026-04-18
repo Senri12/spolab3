@@ -1,0 +1,75 @@
+int pipeIn0();
+int pipeIn1();
+int inboxRead0(int byteOffset);
+int inboxRead1(int byteOffset);
+void outboxWrite0(int byteOffset, int value);
+void pipeOut(int value);
+
+/* Input0 inbox base: 196608 + 0x100 = 196864 */
+/* Input1 inbox base: 200704 + 0x100 = 200960 */
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+    if (x < 0) { pipeOut('-'); x = 0 - x; }
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) { t = t / 10; div = div * 10; }
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    } else {
+        pipeOut(x + '0');
+    }
+}
+
+void nl() { pipeOut('\n'); }
+void taskBody(int dummy) { return; }
+void show(int lbl, int val) { printInt(lbl); pipeOut('='); printInt(val); nl(); }
+
+int main() {
+    int i = 0;
+    int v = 0;
+
+    /* ==== Test K: pipeIn0() then scan Input0 inbox ==== */
+    pipeOut('K'); nl();
+    v = pipeIn0();
+    show(8, v);
+    i = 0;
+    while (i < 64) {
+        v = inboxRead0(i);
+        show(i, v);
+        i = i + 4;
+    }
+
+    /* ==== Test L: write to Input0 outbox[0], then read inbox ==== */
+    pipeOut('L'); nl();
+    outboxWrite0(0, 1024);
+    v = pipeIn0();
+    show(8, v);
+    i = 0;
+    while (i < 64) {
+        v = inboxRead0(i);
+        show(i, v);
+        i = i + 4;
+    }
+
+    /* ==== Test M: read 4 consecutive pipeIn0, check if inbox fills up ==== */
+    pipeOut('M'); nl();
+    v = pipeIn0(); show(0, v);
+    v = pipeIn0(); show(1, v);
+    v = pipeIn0(); show(2, v);
+    v = pipeIn0(); show(3, v);
+    i = 0;
+    while (i < 32) {
+        v = inboxRead0(i);
+        show(i, v);
+        i = i + 4;
+    }
+
+    return 0;
+}
