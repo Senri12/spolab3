@@ -1,0 +1,237 @@
+int pipeIn0();
+void pipeOut(int value);
+
+int readWord() {
+    return pipeIn0();
+}
+
+int readByte(int[] state) {
+    int nextWord = 0;
+    int base = 0;
+    int ch = 0;
+
+    if (state[1] == 0) {
+        state[0] = readWord();
+        state[1] = 4;
+    }
+
+    nextWord = state[0] / 256;
+    base = nextWord * 256;
+    ch = state[0] - base;
+    if (ch < 0) {
+        ch = ch + 256;
+        nextWord = nextWord - 1;
+    }
+
+    state[0] = nextWord;
+    state[1] = state[1] - 1;
+    return ch;
+}
+
+int readUtf8Char(int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+    int value = 0;
+
+    b0 = readByte(state);
+    if (b0 < 128) {
+        return b0;
+    }
+
+    if (b0 < 224) {
+        b1 = readByte(state);
+        value = b0 - 192;
+        value = value * 64;
+        value = value + b1;
+        value = value - 128;
+        return value;
+    }
+
+    b1 = readByte(state);
+    b2 = readByte(state);
+    value = b0 - 224;
+    value = value * 4096;
+    b1 = b1 - 128;
+    b1 = b1 * 64;
+    value = value + b1;
+    value = value + b2;
+    value = value - 128;
+    return value;
+}
+
+void initReader(int[] state) {
+    state[0] = 0;
+    state[1] = 0;
+}
+
+void skipBom(int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+
+    b0 = readByte(state);
+    if (b0 == 239) {
+        b1 = readByte(state);
+        b2 = readByte(state);
+        return;
+    }
+}
+
+int readIntField(int[] state) {
+    int result = 0;
+    int ch = 0;
+    int active = 0;
+
+    ch = readByte(state);
+    pipeOut('a');
+    if (ch == '"') {
+        ch = readByte(state);
+        pipeOut('b');
+    }
+
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            pipeOut('e');
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                pipeOut('n');
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    pipeOut('r');
+                    active = 0;
+                }
+                else {
+                    pipeOut('c');
+                    if (ch >= '0' && ch <= '9') {
+                        result = result * 10;
+                        result = result + ch - '0';
+                    }
+                    ch = readByte(state);
+                    pipeOut('d');
+                }
+            }
+        }
+    }
+    return result;
+}
+
+int readStringField(int[] state, int[] buf, int maxLen) {
+    int ch = 0;
+    int len = 0;
+    int active = 0;
+
+    ch = readUtf8Char(state);
+    if (ch == '"') {
+        ch = readUtf8Char(state);
+    }
+
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    if (ch != '"') {
+                        if (len < maxLen) {
+                            buf[len] = ch;
+                        }
+                        len = len + 1;
+                    }
+                    ch = readUtf8Char(state);
+                }
+            }
+        }
+    }
+    return len;
+}
+
+void skipLine(int[] state) {
+    int ch = 0;
+    int active = 0;
+
+    ch = readByte(state);
+    active = 1;
+    while (active != 0) {
+        if (ch == '\n') {
+            active = 0;
+        }
+        else {
+            ch = readByte(state);
+        }
+    }
+}
+
+int isVladimir(int[] buf, int len) {
+    if (len != 8) { return 0; }
+    if (buf[0] != 1042) { return 0; }
+    if (buf[1] != 1083) { return 0; }
+    if (buf[2] != 1072) { return 0; }
+    if (buf[3] != 1076) { return 0; }
+    if (buf[4] != 1080) { return 0; }
+    if (buf[5] != 1084) { return 0; }
+    if (buf[6] != 1080) { return 0; }
+    if (buf[7] != 1088) { return 0; }
+    return 1;
+}
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+int taskBody(int stage) {
+    return stage;
+}
+
+int main() {
+    int reader[2];
+    int id = 0;
+
+    initReader(reader);
+    pipeOut('S');
+    skipBom(reader);
+    pipeOut('B');
+    id = readIntField(reader);
+    pipeOut('I');
+    printInt(id);
+    pipeOut(';');
+    return 0;
+}

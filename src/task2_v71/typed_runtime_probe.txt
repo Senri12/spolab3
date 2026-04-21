@@ -1,0 +1,54 @@
+void pipeTypedReset0();
+int pipeTypedReadByte0();
+int pipeTypedReadAsciiInt0();
+void pipeOut(int value);
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+int taskBody(int stage) {
+    return stage;
+}
+
+int main() {
+    int b = 0;
+    int x = 0;
+
+    pipeTypedReset0();
+    pipeOut('B');
+    b = pipeTypedReadByte0();
+    printInt(b);
+    pipeOut(';');
+
+    pipeTypedReset0();
+    x = pipeTypedReadAsciiInt0();
+    pipeOut('I');
+    printInt(x);
+    pipeOut('\n');
+    return 0;
+}

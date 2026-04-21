@@ -240,6 +240,56 @@ architecture TacVm13 {
             ip = ip + 8;
         };
 
+        instruction movb_rm = {
+            0000 1011,
+            reg as dst,
+            reg as base,
+            off16 as off,
+            0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            dst = ram:1[address] & 0xFF;
+            ip = ip + 8;
+        };
+
+        instruction movb_ra = {
+            0000 1100,
+            reg as dst,
+            0000 0000 0000 0000 0000 0000 0000 000,
+            addr20 as address
+        } {
+            dst = ram:1[address] & 0xFF;
+            ip = ip + 8;
+        };
+
+        instruction movh_rm = {
+            0000 1101,
+            reg as dst,
+            reg as base,
+            off16 as off,
+            0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            dst = ram:2[address] & 0xFFFF;
+            ip = ip + 8;
+        };
+
+        instruction movh_ra = {
+            0000 1110,
+            reg as dst,
+            0000 0000 0000 0000 0000 0000 0000 000,
+            addr20 as address
+        } {
+            dst = ram:2[address] & 0xFFFF;
+            ip = ip + 8;
+        };
+
         instruction push_r = {
             0001 0000,
             reg as src,
@@ -659,6 +709,12 @@ architecture TacVm13 {
                     for mov_ar(src, address) "[{2}], {1}",
                     for mov_ai(address, value) "[{1}], #{2}",
                     for mov_al(address, value) "[{1}], {2}";
+
+        mnemonic movb for movb_rm(dst, base, off) "{1}, [{2} + {3}]",
+                     for movb_ra(dst, address) "{1}, [{2}]";
+
+        mnemonic movh for movh_rm(dst, base, off) "{1}, [{2} + {3}]",
+                     for movh_ra(dst, address) "{1}, [{2}]";
 
         mnemonic push for push_r(src) "{1}";
         mnemonic pop for pop_r(dst) "{1}";

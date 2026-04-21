@@ -1,0 +1,967 @@
+void ctxInit();
+void ctxReset();
+void ctxCreate(int func_addr, int arg);
+void ctxDispatch(int to_idx);
+void ctxYield();
+void ctxExit();
+int ctxCurrentTask();
+
+void initTimer();
+void waitForTick();
+
+int pipeIn0();
+int pipeIn1();
+int pipeIn2();
+void pipeOut(int value);
+
+int memLoad(int addr);
+void memStore(int addr, int value);
+
+int pipelineThreadCount() {
+    return 5;
+}
+
+int lyudiRowLimit() {
+    return 4;
+}
+
+int obuchRowLimit() {
+    return 4;
+}
+
+int uchenRowLimit() {
+    return 21;
+}
+
+int streamCapacity() {
+    return 16;
+}
+
+int maxSurnameLen() {
+    return 32;
+}
+
+int maxGroupLen() {
+    return 16;
+}
+
+int vladimirLen() {
+    return 8;
+}
+
+int lyudiCountAddr() {
+    return 760000;
+}
+
+int lyudiBaseAddr() {
+    return 760100;
+}
+
+int lyudiEntryInts() {
+    return 34;
+}
+
+int uchenCountAddr() {
+    return 780000;
+}
+
+int uchenBaseAddr() {
+    return 780100;
+}
+
+int uchenEntryInts() {
+    return 18;
+}
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void initStream(int stream) {
+    setStreamHead(stream, 0);
+    setStreamTail(stream, 0);
+    setStreamCount(stream, 0);
+    setStreamClosed(stream, 0);
+    setStreamReadHead(stream, -1);
+    setStreamReadTail(stream, -1);
+    setStreamWriteHead(stream, -1);
+    setStreamWriteTail(stream, -1);
+}
+
+int streamBufferIndex(int stream, int slot) {
+    int idx = 0;
+
+    idx = stream * 16;
+    idx = idx + slot;
+    return idx;
+}
+
+void pushStreamValue(int stream, int value) {
+    int tail = 0;
+    int count = 0;
+    int idx = 0;
+
+    tail = streamTail(stream);
+    idx = streamBufferIndex(stream, tail);
+    setStreamBufferEntry(idx, value);
+
+    tail = tail + 1;
+    if (tail >= 16) {
+        tail = 0;
+    }
+    setStreamTail(stream, tail);
+
+    count = streamCount(stream);
+    count = count + 1;
+    setStreamCount(stream, count);
+}
+
+int popStreamValue(int stream) {
+    int head = 0;
+    int count = 0;
+    int idx = 0;
+    int value = 0;
+
+    head = streamHead(stream);
+    idx = streamBufferIndex(stream, head);
+    value = streamBufferEntry(idx);
+
+    head = head + 1;
+    if (head >= 16) {
+        head = 0;
+    }
+    setStreamHead(stream, head);
+
+    count = streamCount(stream);
+    count = count - 1;
+    setStreamCount(stream, count);
+    return value;
+}
+
+void qStreamWrite(int stream, int value) {
+    int count = 0;
+
+    count = streamCount(stream);
+    while (count >= 16) {
+        ctxYield();
+        count = streamCount(stream);
+    }
+    pushStreamValue(stream, value);
+}
+
+int qStreamRead(int stream) {
+    int count = 0;
+    int closed = 0;
+
+    count = streamCount(stream);
+    while (count <= 0) {
+        closed = streamClosed(stream);
+        if (closed != 0) {
+            return -1;
+        }
+        ctxYield();
+        count = streamCount(stream);
+    }
+    return popStreamValue(stream);
+}
+
+void qStreamClose(int stream) {
+    setStreamClosed(stream, 1);
+}
+
+int deviceReadWord(int dev) {
+    if (dev == 0) {
+        return pipeIn0();
+    }
+    if (dev == 1) {
+        return pipeIn1();
+    }
+    return pipeIn2();
+}
+
+void initReader(int[] state) {
+    state[0] = 0;
+    state[1] = 0;
+}
+
+int readByte(int dev, int[] state) {
+    int nextWord = 0;
+    int base = 0;
+    int ch = 0;
+
+    if (state[1] == 0) {
+        waitForTick();
+        state[0] = deviceReadWord(dev);
+        state[1] = 4;
+    }
+
+    nextWord = state[0] / 256;
+    base = nextWord * 256;
+    ch = state[0] - base;
+    if (ch < 0) {
+        ch = ch + 256;
+        nextWord = nextWord - 1;
+    }
+
+    state[0] = nextWord;
+    state[1] = state[1] - 1;
+    return ch;
+}
+
+int readUtf8Char(int dev, int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+    int value = 0;
+
+    b0 = readByte(dev, state);
+    if (b0 < 128) {
+        return b0;
+    }
+
+    if (b0 < 224) {
+        b1 = readByte(dev, state);
+        value = b0 - 192;
+        value = value * 64;
+        value = value + b1;
+        value = value - 128;
+        return value;
+    }
+
+    b1 = readByte(dev, state);
+    b2 = readByte(dev, state);
+    value = b0 - 224;
+    value = value * 4096;
+    b1 = b1 - 128;
+    b1 = b1 * 64;
+    value = value + b1;
+    value = value + b2;
+    value = value - 128;
+    return value;
+}
+
+void skipBom(int dev, int[] state) {
+    int b0 = 0;
+    int b1 = 0;
+    int b2 = 0;
+
+    b0 = readByte(dev, state);
+    if (b0 == 239) {
+        b1 = readByte(dev, state);
+        b2 = readByte(dev, state);
+        return;
+    }
+}
+
+void skipHeader(int dev, int[] state) {
+    int ch = 0;
+
+    ch = readByte(dev, state);
+    while (ch != '\n') {
+        ch = readByte(dev, state);
+    }
+}
+
+void skipLine(int dev, int[] state) {
+    int ch = 0;
+
+    ch = readByte(dev, state);
+    while (ch != '\n') {
+        ch = readByte(dev, state);
+    }
+}
+
+void skipField(int dev, int[] state) {
+    int ch = 0;
+    int active = 0;
+
+    ch = readByte(dev, state);
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    ch = readByte(dev, state);
+                }
+            }
+        }
+    }
+}
+
+int readIntField(int dev, int[] state) {
+    int result = 0;
+    int ch = 0;
+    int active = 0;
+
+    ch = readByte(dev, state);
+    if (ch == '"') {
+        ch = readByte(dev, state);
+    }
+
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    if (ch >= '0' && ch <= '9') {
+                        result = result * 10;
+                        result = result + ch - '0';
+                    }
+                    ch = readByte(dev, state);
+                }
+            }
+        }
+    }
+    return result;
+}
+
+int readStringField(int dev, int[] state, int[] buf, int maxLen) {
+    int ch = 0;
+    int len = 0;
+    int active = 0;
+
+    ch = readUtf8Char(dev, state);
+    if (ch == '"') {
+        ch = readUtf8Char(dev, state);
+    }
+
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    if (ch != '"') {
+                        if (len < maxLen) {
+                            buf[len] = ch;
+                        }
+                        len = len + 1;
+                    }
+                    ch = readUtf8Char(dev, state);
+                }
+            }
+        }
+    }
+    return len;
+}
+
+int isVladimir(int[] buf, int len) {
+    if (len != 8) {
+        return 0;
+    }
+    if (buf[0] != 1042) { return 0; }
+    if (buf[1] != 1083) { return 0; }
+    if (buf[2] != 1072) { return 0; }
+    if (buf[3] != 1076) { return 0; }
+    if (buf[4] != 1080) { return 0; }
+    if (buf[5] != 1084) { return 0; }
+    if (buf[6] != 1080) { return 0; }
+    if (buf[7] != 1088) { return 0; }
+    return 1;
+}
+
+int lyudiEntryAddr(int idx) {
+    int addr = 0;
+    int stride = 0;
+
+    stride = 34 * 4;
+    addr = idx * stride;
+    addr = addr + 760100;
+    return addr;
+}
+
+void saveLyudiEntry(int id, int[] surname, int surnameLen) {
+    int idx = 0;
+    int addr = 0;
+    int i = 0;
+
+    idx = memLoad(760000);
+    addr = lyudiEntryAddr(idx);
+    memStore(addr, id);
+    memStore(addr + 4, surnameLen);
+
+    i = 0;
+    while (i < 32) {
+        if (i < surnameLen) {
+            memStore(addr + 8 + i * 4, surname[i]);
+        }
+        else {
+            memStore(addr + 8 + i * 4, 0);
+        }
+        i = i + 1;
+    }
+
+    idx = idx + 1;
+    memStore(760000, idx);
+}
+
+int findLyudiById(int id) {
+    int count = 0;
+    int i = 0;
+    int addr = 0;
+    int entryId = 0;
+
+    count = memLoad(760000);
+    while (i < count) {
+        addr = lyudiEntryAddr(i);
+        entryId = memLoad(addr);
+        if (entryId == id) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int lyudiIdAt(int idx) {
+    return memLoad(lyudiEntryAddr(idx));
+}
+
+int lyudiLenAt(int idx) {
+    return memLoad(lyudiEntryAddr(idx) + 4);
+}
+
+int lyudiCharAt(int idx, int pos) {
+    return memLoad(lyudiEntryAddr(idx) + 8 + pos * 4);
+}
+
+int uchenEntryAddr(int idx) {
+    int addr = 0;
+    int stride = 0;
+
+    stride = 18 * 4;
+    addr = idx * stride;
+    addr = addr + 780100;
+    return addr;
+}
+
+void saveUchenEntry(int id, int[] groupBuf, int groupLen) {
+    int idx = 0;
+    int addr = 0;
+    int i = 0;
+
+    idx = memLoad(780000);
+    addr = uchenEntryAddr(idx);
+    memStore(addr, id);
+    memStore(addr + 4, groupLen);
+
+    i = 0;
+    while (i < 16) {
+        if (i < groupLen) {
+            memStore(addr + 8 + i * 4, groupBuf[i]);
+        }
+        else {
+            memStore(addr + 8 + i * 4, 0);
+        }
+        i = i + 1;
+    }
+
+    idx = idx + 1;
+    memStore(780000, idx);
+}
+
+int uchenCountValue() {
+    return memLoad(780000);
+}
+
+int uchenIdAt(int idx) {
+    return memLoad(uchenEntryAddr(idx));
+}
+
+int uchenLenAt(int idx) {
+    return memLoad(uchenEntryAddr(idx) + 4);
+}
+
+int uchenCharAt(int idx, int pos) {
+    return memLoad(uchenEntryAddr(idx) + 8 + pos * 4);
+}
+
+void writeLyudiSurname(int idx) {
+    int len = 0;
+    int i = 0;
+    int ch = 0;
+
+    len = lyudiLenAt(idx);
+    i = 0;
+    while (i < len) {
+        ch = lyudiCharAt(idx, i);
+        pipeOut(ch);
+        i = i + 1;
+    }
+}
+
+void writeGroupByIndex(int idx) {
+    int len = 0;
+    int i = 0;
+    int ch = 0;
+
+    len = uchenLenAt(idx);
+    i = 0;
+    while (i < len) {
+        ch = uchenCharAt(idx, i);
+        pipeOut(ch);
+        i = i + 1;
+    }
+}
+
+void writeBuf(int[] buf, int len) {
+    int i = 0;
+
+    i = 0;
+    while (i < len) {
+        pipeOut(buf[i]);
+        i = i + 1;
+    }
+}
+
+void finishThisThread() {
+    int self = 0;
+
+    self = ctxCurrentTask();
+    setTaskState(self, 3);
+    ctxExit();
+}
+
+void lyudiParser(int dummy) {
+    int reader[2];
+    int surname[32];
+    int name[16];
+    int rows = 0;
+    int id = 0;
+    int surnameLen = 0;
+    int nameLen = 0;
+    int i = 0;
+    int rowLimit = 0;
+    int surnameCap = 0;
+    int isMatch = 0;
+
+    initReader(reader);
+    pipeOut('L');
+    skipBom(0, reader);
+    pipeOut('a');
+    rowLimit = 4;
+    surnameCap = 32;
+
+    while (rows < rowLimit) {
+        id = readIntField(0, reader);
+        pipeOut('Z');
+        surnameLen = readStringField(0, reader, surname, surnameCap);
+        pipeOut('d');
+        nameLen = readStringField(0, reader, name, 16);
+        pipeOut('e');
+        skipLine(0, reader);
+        pipeOut('f');
+
+        isMatch = isVladimir(name, nameLen);
+        if (isMatch != 0) {
+            qStreamWrite(0, id);
+            qStreamWrite(0, surnameLen);
+            if (surnameLen > surnameCap) {
+                surnameLen = surnameCap;
+            }
+            i = 0;
+            while (i < surnameLen) {
+                qStreamWrite(0, surname[i]);
+                i = i + 1;
+            }
+        }
+
+        rows = rows + 1;
+        pipeOut('g');
+        ctxYield();
+    }
+
+    qStreamClose(0);
+    finishThisThread();
+}
+
+void obuchParser(int dummy) {
+    int reader[2];
+    int rows = 0;
+    int chlvkId = 0;
+    int rowLimit = 0;
+
+    initReader(reader);
+    pipeOut('O');
+    skipBom(1, reader);
+    rowLimit = 4;
+
+    while (rows < rowLimit) {
+        skipField(1, reader);
+        chlvkId = readIntField(1, reader);
+        skipLine(1, reader);
+
+        if (chlvkId < 113409) {
+            qStreamWrite(1, chlvkId);
+        }
+
+        rows = rows + 1;
+        ctxYield();
+    }
+
+    qStreamClose(1);
+    finishThisThread();
+}
+
+void uchenParser(int dummy) {
+    int reader[2];
+    int groupBuf[16];
+    int rows = 0;
+    int chlvkId = 0;
+    int groupLen = 0;
+    int i = 0;
+    int rowLimit = 0;
+    int groupCap = 0;
+
+    initReader(reader);
+    pipeOut('U');
+    skipBom(2, reader);
+    rowLimit = 21;
+    groupCap = 16;
+
+    while (rows < rowLimit) {
+        readIntField(2, reader);
+        chlvkId = readIntField(2, reader);
+
+        i = 0;
+        while (i < 5) {
+            skipField(2, reader);
+            i = i + 1;
+        }
+
+        groupLen = readStringField(2, reader, groupBuf, groupCap);
+        skipLine(2, reader);
+
+        qStreamWrite(3, chlvkId);
+        qStreamWrite(3, groupLen);
+        if (groupLen > groupCap) {
+            groupLen = groupCap;
+        }
+        i = 0;
+        while (i < groupLen) {
+            qStreamWrite(3, groupBuf[i]);
+            i = i + 1;
+        }
+
+        rows = rows + 1;
+        ctxYield();
+    }
+
+    qStreamClose(3);
+    finishThisThread();
+}
+
+void joinLyudiObuch(int dummy) {
+    int personId = 0;
+    int surnameLen = 0;
+    int surnameBuf[32];
+    int i = 0;
+    int idx = 0;
+    int ch = 0;
+    int surnameCap = 0;
+
+    memStore(760000, 0);
+    pipeOut('J');
+    surnameCap = 32;
+
+    personId = qStreamRead(0);
+    while (personId != -1) {
+        surnameLen = qStreamRead(0);
+        if (surnameLen > surnameCap) {
+            surnameLen = surnameCap;
+        }
+
+        i = 0;
+        while (i < surnameLen) {
+            surnameBuf[i] = qStreamRead(0);
+            i = i + 1;
+        }
+
+        saveLyudiEntry(personId, surnameBuf, surnameLen);
+        personId = qStreamRead(0);
+        ctxYield();
+    }
+
+    personId = qStreamRead(1);
+    while (personId != -1) {
+        idx = findLyudiById(personId);
+        if (idx >= 0) {
+            surnameLen = lyudiLenAt(idx);
+            qStreamWrite(2, personId);
+            qStreamWrite(2, surnameLen);
+
+            i = 0;
+            while (i < surnameLen) {
+                ch = lyudiCharAt(idx, i);
+                qStreamWrite(2, ch);
+                i = i + 1;
+            }
+        }
+
+        personId = qStreamRead(1);
+        ctxYield();
+    }
+
+    qStreamClose(2);
+    finishThisThread();
+}
+
+void joinWithUchenAndPrint(int dummy) {
+    int personId = 0;
+    int surnameLen = 0;
+    int surnameBuf[32];
+    int groupBuf[16];
+    int groupLen = 0;
+    int i = 0;
+    int uCount = 0;
+    int matchCount = 0;
+    int groupCap = 0;
+    int surnameCap = 0;
+    int candidateId = 0;
+
+    memStore(780000, 0);
+    pipeOut('P');
+    groupCap = 16;
+    surnameCap = 32;
+
+    personId = qStreamRead(3);
+    while (personId != -1) {
+        groupLen = qStreamRead(3);
+        if (groupLen > groupCap) {
+            groupLen = groupCap;
+        }
+
+        i = 0;
+        while (i < groupLen) {
+            groupBuf[i] = qStreamRead(3);
+            i = i + 1;
+        }
+
+        saveUchenEntry(personId, groupBuf, groupLen);
+        personId = qStreamRead(3);
+        ctxYield();
+    }
+
+    personId = qStreamRead(2);
+    while (personId != -1) {
+        surnameLen = qStreamRead(2);
+        if (surnameLen > surnameCap) {
+            surnameLen = surnameCap;
+        }
+
+        i = 0;
+        while (i < surnameLen) {
+            surnameBuf[i] = qStreamRead(2);
+            i = i + 1;
+        }
+
+        uCount = uchenCountValue();
+        matchCount = 0;
+        i = 0;
+        while (i < uCount) {
+            candidateId = uchenIdAt(i);
+            if (candidateId == personId) {
+                writeBuf(surnameBuf, surnameLen);
+                pipeOut(';');
+                printInt(personId);
+                pipeOut(';');
+                writeGroupByIndex(i);
+                pipeOut('\n');
+                matchCount = matchCount + 1;
+            }
+            i = i + 1;
+        }
+
+        if (matchCount == 0) {
+            writeBuf(surnameBuf, surnameLen);
+            pipeOut(';');
+            printInt(personId);
+            pipeOut(';');
+            pipeOut('\n');
+        }
+
+        personId = qStreamRead(2);
+        ctxYield();
+    }
+
+    finishThisThread();
+}
+
+void taskBody(int stage) {
+    if (stage == 0) {
+        lyudiParser(0);
+        return;
+    }
+    if (stage == 1) {
+        obuchParser(0);
+        return;
+    }
+    if (stage == 2) {
+        uchenParser(0);
+        return;
+    }
+    if (stage == 3) {
+        joinLyudiObuch(0);
+        return;
+    }
+    joinWithUchenAndPrint(0);
+}
+
+void createPipelineThreads() {
+    int addr = 0;
+    int i = 0;
+    int threadCount = 0;
+
+    addr = funcAddr(taskBody);
+    threadCount = 5;
+    i = 0;
+    while (i < threadCount) {
+        ctxCreate(addr, i);
+        i = i + 1;
+    }
+}
+
+int finishedCount() {
+    int i = 0;
+    int done = 0;
+    int threadCount = 0;
+    int state = 0;
+
+    threadCount = 5;
+    i = 0;
+    while (i < threadCount) {
+        state = taskState(i);
+        if (state == 3) {
+            done = done + 1;
+        }
+        i = i + 1;
+    }
+    return done;
+}
+
+int nextRunnable(int current) {
+    int idx = 0;
+    int tries = 0;
+    int threadCount = 0;
+    int state = 0;
+
+    threadCount = 5;
+    idx = current + 1;
+    if (idx >= threadCount) {
+        idx = 0;
+    }
+
+    tries = 0;
+    while (tries < threadCount) {
+        state = taskState(idx);
+        if (state != 3) {
+            return idx;
+        }
+        idx = idx + 1;
+        if (idx >= threadCount) {
+            idx = 0;
+        }
+        tries = tries + 1;
+    }
+
+    return -1;
+}
+
+void initPipelineState() {
+    initStream(0);
+    initStream(1);
+    initStream(2);
+    initStream(3);
+
+    setTaskState(0, 1);
+    setTaskState(1, 1);
+    setTaskState(2, 1);
+    setTaskState(3, 1);
+    setTaskState(4, 1);
+
+    memStore(760000, 0);
+    memStore(780000, 0);
+}
+
+int main() {
+    int current = -1;
+    int done = 0;
+    int threadCount = 0;
+
+    pipeOut('M');
+    initTimer();
+    ctxInit();
+    pipeOut('B');
+    ctxReset();
+    pipeOut('C');
+    initPipelineState();
+    pipeOut('D');
+    createPipelineThreads();
+    pipeOut('E');
+    threadCount = 5;
+    done = finishedCount();
+
+    while (done < threadCount) {
+        pipeOut('F');
+        current = nextRunnable(current);
+        if (current >= 0) {
+            pipeOut('H');
+            ctxDispatch(current + 1);
+            pipeOut('I');
+        }
+        done = finishedCount();
+    }
+
+    return 0;
+}

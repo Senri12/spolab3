@@ -1,0 +1,29 @@
+
+        static void f1((Stream s, int n, int d) a)
+        {
+            for (int i = a.n; ; i += a.d)
+                a.s.Write(BitConverter.GetBytes(i), 0, 4);
+        }
+
+        static void f2(Stream s)
+        {
+            var buff = new byte[4];
+            for (; ; )
+            {
+                int r1 = s.Read(buff, 0, 4);
+                int x = BitConverter.ToInt32(buff, 0);
+                Console.WriteLine(x);
+            }
+        }
+
+        static void Main(string[] args)
+        {
+            Pipe p1 = MakePipe();
+            Pipe p2 = MakePipe();
+
+            CreateThread(f1, (p2.GetInput(), 0, 2));
+            CreateThread(f2, p2.GetOutput());
+
+            CreateThread(f1, (p1.GetInput(), 1, 2));
+            CreateThread(f2, p1.GetOutput());
+        }

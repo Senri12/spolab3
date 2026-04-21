@@ -3084,6 +3084,18 @@ typedef struct {
   FunctionCFG* function;
 } SymbolTable;
 
+static void load_simple_to_reg(const char* tok, int regno, SymbolTable* st,
+                               Instr** head, Instr** tail,
+                               char** pending_label_ptr);
+static void emit_call_with_args(const char* func_name, char args[][64], int argc,
+                                SymbolTable* st, Instr** head, Instr** tail,
+                                char** pending_label);
+static int split_call_text(const char* text, char* fname, size_t fname_size,
+                           char args[][64], int max_args);
+static int emit_builtin_call_to_reg(const char* fname, char args[][64], int argc,
+                                    int dst_reg, SymbolTable* st, Instr** head,
+                                    Instr** tail, char** pending_label_ptr);
+
 static int reserve_local_bytes(SymbolTable* st, int size) {
   if (!st || size <= 0) return 0;
   st->local_vars_size += size;
@@ -3442,6 +3454,89 @@ static void load_simple_to_reg(const char* tok, int regno, SymbolTable* st,
   if (tok[0] == '\0') return;
 
   char* lbl = *pending_label_ptr;
+
+  {
+    char fname[64];
+    char args_arr[16][64];
+    int call_info = split_call_text(tok, fname, sizeof(fname), args_arr, 16);
+    if (call_info > 0) {
+      int argc = call_info - 1;
+
+      if (emit_builtin_call_to_reg(fname, args_arr, argc, regno, st, head, tail,
+                                   pending_label_ptr)) {
+        return;
+      }
+
+      {
+        char owner_name[64];
+        char method_name[64];
+        if (split_member_ref(fname, owner_name, sizeof(owner_name), method_name,
+                             sizeof(method_name))) {
+          Symbol* owner_sym = resolve_owner_symbol(st, owner_name);
+          if (owner_sym && owner_sym->type_name) {
+            char* arg_types[16] = {0};
+            for (int i = 0; i < argc; ++i)
+              arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+            MethodInfo* method =
+                find_method_in_type(st->analysis, owner_sym->type_name,
+                                    method_name, arg_types, argc);
+            if (method) {
+              char call_args[17][64];
+              snprintf(call_args[0], sizeof(call_args[0]), "%s", owner_name);
+              for (int i = 0; i < argc; ++i) {
+                snprintf(call_args[i + 1], sizeof(call_args[i + 1]), "%s",
+                         args_arr[i]);
+              }
+              emit_call_with_args(method->mangled_name, call_args, argc + 1, st,
+                                  head, tail, pending_label_ptr);
+              if (regno != 1) {
+                emit_instr(head, tail, "mov", reg(regno), reg(1), zero_reg(),
+                           NULL);
+              }
+              return;
+            }
+          }
+        }
+      }
+
+      if (st->function && st->function->owner_type) {
+        char* arg_types[16] = {0};
+        for (int i = 0; i < argc; ++i)
+          arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+        MethodInfo* method =
+            find_method_in_type(st->analysis, st->function->owner_type, fname,
+                                arg_types, argc);
+        if (method) {
+          char call_args[17][64];
+          snprintf(call_args[0], sizeof(call_args[0]), "%s", "this");
+          for (int i = 0; i < argc; ++i) {
+            snprintf(call_args[i + 1], sizeof(call_args[i + 1]), "%s",
+                     args_arr[i]);
+          }
+          emit_call_with_args(method->mangled_name, call_args, argc + 1, st,
+                              head, tail, pending_label_ptr);
+          if (regno != 1) {
+            emit_instr(head, tail, "mov", reg(regno), reg(1), zero_reg(), NULL);
+          }
+          return;
+        }
+      }
+
+      {
+        char* arg_types[16] = {0};
+        const char* target = NULL;
+        for (int i = 0; i < argc; ++i)
+          arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+        target = resolve_global_call_label(st->analysis, fname, arg_types, argc);
+        emit_call_with_args(target, args_arr, argc, st, head, tail,
+                            pending_label_ptr);
+        if (regno != 1) {
+          emit_instr(head, tail, "mov", reg(regno), reg(1), zero_reg(), NULL);
+        }
+        return;
+      }
+    }
+  }
 
   if (tok[0] == '-' && !isdigit((unsigned char)tok[1])) {
     load_simple_to_reg(tok + 1, regno, st, head, tail, pending_label_ptr);
@@ -3845,24 +3940,69 @@ static int parse_call_arg_list(char* inside, char args[][64], int max_args) {
   if (!inside || max_args <= 0) return 0;
 
   while (*p && argc < max_args) {
-    char* comma = NULL;
+    char* start = NULL;
+    char* end = NULL;
+    int round_depth = 0;
+    int square_depth = 0;
+    int angle_depth = 0;
+    int in_char = 0;
+    int in_string = 0;
     size_t n = 0;
 
     while (*p == ' ' || *p == '\t') p++;
     if (*p == '\0') break;
 
-    comma = strchr(p, ',');
-    if (!comma) comma = p + strlen(p);
+    start = p;
+    while (*p) {
+      char ch = *p;
+      char prev = (p > start) ? *(p - 1) : '\0';
 
-    n = (size_t)(comma - p);
+      if (in_char) {
+        if (ch == '\'' && prev != '\\') in_char = 0;
+        ++p;
+        continue;
+      }
+      if (in_string) {
+        if (ch == '"' && prev != '\\') in_string = 0;
+        ++p;
+        continue;
+      }
+
+      if (ch == '\'') {
+        in_char = 1;
+        ++p;
+        continue;
+      }
+      if (ch == '"') {
+        in_string = 1;
+        ++p;
+        continue;
+      }
+
+      if (ch == '(') ++round_depth;
+      else if (ch == ')' && round_depth > 0) --round_depth;
+      else if (ch == '[') ++square_depth;
+      else if (ch == ']' && square_depth > 0) --square_depth;
+      else if (ch == '<') ++angle_depth;
+      else if (ch == '>' && angle_depth > 0) --angle_depth;
+
+      if (ch == ',' && round_depth == 0 && square_depth == 0 &&
+          angle_depth == 0) {
+        break;
+      }
+      ++p;
+    }
+    end = p;
+
+    n = (size_t)(end - start);
     if (n >= 63) n = 63;
-    memcpy(args[argc], p, n);
+    memcpy(args[argc], start, n);
     args[argc][n] = '\0';
     trim_whitespace(args[argc]);
     argc++;
 
-    if (*comma == ',') {
-      p = comma + 1;
+    if (*p == ',') {
+      p++;
     } else {
       break;
     }
@@ -3883,8 +4023,53 @@ static int split_call_text(const char* text, char* fname, size_t fname_size,
 
   lpar = strchr(text, '(');
   if (!lpar) return 0;
-  rpar = strrchr(lpar, ')');
+  {
+    int depth = 0;
+    int in_char = 0;
+    int in_string = 0;
+    const char* p = lpar;
+    while (*p) {
+      char ch = *p;
+      char prev = (p > text) ? *(p - 1) : '\0';
+      if (in_char) {
+        if (ch == '\'' && prev != '\\') in_char = 0;
+        ++p;
+        continue;
+      }
+      if (in_string) {
+        if (ch == '"' && prev != '\\') in_string = 0;
+        ++p;
+        continue;
+      }
+      if (ch == '\'') {
+        in_char = 1;
+        ++p;
+        continue;
+      }
+      if (ch == '"') {
+        in_string = 1;
+        ++p;
+        continue;
+      }
+      if (ch == '(') ++depth;
+      else if (ch == ')') {
+        --depth;
+        if (depth == 0) {
+          rpar = p;
+          break;
+        }
+      }
+      ++p;
+    }
+  }
   if (!rpar || rpar < lpar) return 0;
+  {
+    const char* p = rpar + 1;
+    while (*p) {
+      if (!isspace((unsigned char)*p)) return 0;
+      ++p;
+    }
+  }
 
   fnlen = (size_t)(lpar - text);
   while (fnlen > 0 &&
@@ -4183,6 +4368,96 @@ static int emit_builtin_indexed_statement_call(
       return 1;
     }
   }
+  return 0;
+}
+
+static int emit_builtin_call_to_reg(const char* fname, char args[][64], int argc,
+                                    int dst_reg, SymbolTable* st, Instr** head,
+                                    Instr** tail,
+                                    char** pending_label_ptr) {
+  if (!fname || !st || !head || !tail || !pending_label_ptr) return 0;
+
+  if (argc == 0) {
+    for (int i = 0; kBuiltinConstantSlots[i].getter_name; ++i) {
+      if (strcmp(fname, kBuiltinConstantSlots[i].getter_name) == 0) {
+        emit_instr(head, tail, "mov", reg(dst_reg),
+                   imm(kBuiltinConstantSlots[i].value), zero_reg(),
+                   take_pending_label(pending_label_ptr));
+        return 1;
+      }
+    }
+
+    for (int i = 0; kBuiltinWordSlots[i].getter_name; ++i) {
+      if (strcmp(fname, kBuiltinWordSlots[i].getter_name) == 0) {
+        emit_load_absolute_word(dst_reg, kBuiltinWordSlots[i].address, head,
+                                tail, pending_label_ptr);
+        return 1;
+      }
+    }
+  }
+
+  if (argc == 1) {
+    for (int i = 0; kBuiltinIndexedWordSlots[i].getter_name; ++i) {
+      if (strcmp(fname, kBuiltinIndexedWordSlots[i].getter_name) == 0) {
+        emit_load_indexed_word(dst_reg, args[0],
+                               kBuiltinIndexedWordSlots[i].base_address, st,
+                               head, tail, pending_label_ptr);
+        return 1;
+      }
+    }
+
+    if (strcmp(fname, "taskStackTop") == 0) {
+      emit_instr(head, tail, "mov", reg(5), imm(BUILTIN_TASK_STACK_BASE),
+                 zero_reg(), take_pending_label(pending_label_ptr));
+      eval_arg_to_reg(args[0], 2, st, head, tail, pending_label_ptr);
+      emit_instr(head, tail, "mul", reg(2), reg(2),
+                 imm(BUILTIN_TASK_STACK_STRIDE), NULL);
+      emit_instr(head, tail, "sub", reg(dst_reg), reg(5), reg(2), NULL);
+      return 1;
+    }
+
+    if (strcmp(fname, "memLoad") == 0) {
+      eval_arg_to_reg(args[0], 2, st, head, tail, pending_label_ptr);
+      emit_instr(head, tail, "mov", reg(dst_reg), mem_op(2, 0), zero_reg(),
+                 take_pending_label(pending_label_ptr));
+      return 1;
+    }
+
+    if (strcmp(fname, "memLoadByte") == 0) {
+      eval_arg_to_reg(args[0], 2, st, head, tail, pending_label_ptr);
+      emit_instr(head, tail, "movb", reg(dst_reg), mem_op(2, 0), zero_reg(),
+                 take_pending_label(pending_label_ptr));
+      return 1;
+    }
+
+    if (strcmp(fname, "memLoadHalf") == 0) {
+      eval_arg_to_reg(args[0], 2, st, head, tail, pending_label_ptr);
+      emit_instr(head, tail, "movh", reg(dst_reg), mem_op(2, 0), zero_reg(),
+                 take_pending_label(pending_label_ptr));
+      return 1;
+    }
+
+    if (strcmp(fname, "funcAddr") == 0) {
+      const char* target =
+          resolve_global_call_label(st->analysis, args[0], NULL, 0);
+      emit_instr(head, tail, "mov", reg(dst_reg), label_op(strdup(target)),
+                 zero_reg(), take_pending_label(pending_label_ptr));
+      return 1;
+    }
+  }
+
+  if (strcmp(fname, "getSp") == 0 && argc == 0) {
+    emit_instr(head, tail, "mov", reg(dst_reg), reg(SP), zero_reg(),
+               take_pending_label(pending_label_ptr));
+    return 1;
+  }
+
+  if (strcmp(fname, "getFp") == 0 && argc == 0) {
+    emit_instr(head, tail, "mov", reg(dst_reg), reg(FP), zero_reg(),
+               take_pending_label(pending_label_ptr));
+    return 1;
+  }
+
   return 0;
 }
 
@@ -4538,6 +4813,78 @@ static char* generate_single_statement(char* stmt, char* pending_label,
         int call_info = 0;
         int argc = 0;
         while (*rhs == ' ' || *rhs == '\t') rhs++;
+
+        call_info = split_call_text(rhs, fname, sizeof(fname), args_arr, 16);
+        if (call_info > 0) {
+          argc = call_info - 1;
+
+          if (emit_builtin_assignment_call(lhs, fname, args_arr, argc, st, head,
+                                           tail, &pending_label)) {
+            return NULL;
+          }
+
+          {
+            char owner_name[64];
+            char method_name[64];
+            if (split_member_ref(fname, owner_name, sizeof(owner_name),
+                                 method_name, sizeof(method_name))) {
+              Symbol* owner_sym = resolve_owner_symbol(st, owner_name);
+              if (owner_sym && owner_sym->type_name) {
+                char* arg_types[16] = {0};
+                for (int i = 0; i < argc; ++i)
+                  arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+                MethodInfo* method =
+                    find_method_in_type(st->analysis, owner_sym->type_name,
+                                        method_name, arg_types, argc);
+                if (method) {
+                  char call_args[17][64];
+                  snprintf(call_args[0], sizeof(call_args[0]), "%s", owner_name);
+                  for (int i = 0; i < argc; ++i) {
+                    snprintf(call_args[i + 1], sizeof(call_args[i + 1]), "%s",
+                             args_arr[i]);
+                  }
+                  emit_call_with_args(method->mangled_name, call_args, argc + 1,
+                                      st, head, tail, &pending_label);
+                  store_reg_to_lvalue(lhs, 1, st, head, tail, &pending_label);
+                  return NULL;
+                }
+              }
+            } else if (st->function && st->function->owner_type) {
+              char* arg_types[16] = {0};
+              for (int i = 0; i < argc; ++i)
+                arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+              MethodInfo* method =
+                  find_method_in_type(st->analysis, st->function->owner_type,
+                                      fname, arg_types, argc);
+              if (method) {
+                char call_args[17][64];
+                snprintf(call_args[0], sizeof(call_args[0]), "%s", "this");
+                for (int i = 0; i < argc; ++i) {
+                  snprintf(call_args[i + 1], sizeof(call_args[i + 1]), "%s",
+                           args_arr[i]);
+                }
+                emit_call_with_args(method->mangled_name, call_args, argc + 1,
+                                    st, head, tail, &pending_label);
+                store_reg_to_lvalue(lhs, 1, st, head, tail, &pending_label);
+                return NULL;
+              }
+            }
+          }
+
+          {
+            char* arg_types[16] = {0};
+            const char* target = NULL;
+            for (int i = 0; i < argc; ++i)
+              arg_types[i] = (char*)infer_simple_type(st, args_arr[i]);
+            target = resolve_global_call_label(st->analysis, fname, arg_types,
+                                               argc);
+            emit_call_with_args(target, args_arr, argc, st, head, tail,
+                                &pending_label);
+          }
+
+          store_reg_to_lvalue(lhs, 1, st, head, tail, &pending_label);
+          return NULL;
+        }
 
         // rhs должно выглядеть как fname(...)
         char* lpar = strchr(rhs, '(');
@@ -5015,48 +5362,25 @@ static void gen_block(CFGNode* node, FunctionCFG* cfg, Instr** head,
                    (!strcmp(cmp_op, "==")) || (!strcmp(cmp_op, "!="));
       if (is_cmp) {
         int off_assign = get_var_offset(st, assign_lhs);
-        int arg_count = 0;
-        char fname[64], args[256];
-        fname[0] = '\0';
-        args[0] = '\0';
-        int parsed_call = 0;
+        char fname[64];
+        char parsed_args[32][64];
+        int call_info =
+            split_call_text(assign_rhs, fname, sizeof(fname), parsed_args, 32);
 
-        if (sscanf(assign_rhs, "%63[^ (](%255[^)])", fname, args) == 2) {
-          parsed_call = 1;
-        } else {
-          size_t len = strlen(assign_rhs);
-          if (len >= 2 && assign_rhs[len - 1] == ')' &&
-              assign_rhs[len - 2] == '(') {
-            size_t flen = len - 2;
-            if (flen >= sizeof(fname)) flen = sizeof(fname) - 1;
-            memcpy(fname, assign_rhs, flen);
-            fname[flen] = '\0';
-            args[0] = '\0';
-            parsed_call = 1;
-          }
-        }
-
-        if (parsed_call) {
-          char* tok = strtok(args, ",");
-          char* arg_tokens[32];
+        if (call_info > 0) {
+          int arg_count = call_info - 1;
           char* arg_types[32] = {0};
           const char* target = NULL;
-          while (tok && arg_count < 32) {
-            trim_whitespace(tok);
-            arg_tokens[arg_count++] = strdup(tok);
-            tok = strtok(NULL, ",");
-          }
           for (int i = 0; i < arg_count; ++i)
-            arg_types[i] = (char*)infer_simple_type(st, arg_tokens[i]);
+            arg_types[i] = (char*)infer_simple_type(st, parsed_args[i]);
           target = resolve_global_call_label(st->analysis, fname, arg_types,
                                              arg_count);
 
           for (int idx = arg_count - 1; idx >= 0; --idx) {
-            eval_arg_to_reg(arg_tokens[idx], 7 + idx, st, head, tail,
+            eval_arg_to_reg(parsed_args[idx], 7 + idx, st, head, tail,
                             &pending_label);
             emit_instr(head, tail, "push", reg(7 + idx), zero_reg(), zero_reg(),
                        NULL);
-            free(arg_tokens[idx]);
           }
 
           emit_instr(head, tail, "call", label_op(strdup(target)), zero_reg(),
@@ -5999,6 +6323,8 @@ static void append_runtime_asm(FILE* out) {
       "src/runtime/pipe_in.asm",
       "src/runtime/pipe_in0.asm",
       "src/runtime/pipe_in1.asm",
+      "src/runtime/pipe_in2.asm",
+      "src/runtime/pipe_typed.asm",
       "src/runtime/pipe_out.asm",
       "src/runtime/timer.asm",
       "src/runtime/rt_ctx.asm",
