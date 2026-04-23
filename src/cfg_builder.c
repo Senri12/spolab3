@@ -932,6 +932,12 @@ static int is_builtin_type_name(const char* type_name) {
          strcmp(type_name, "char") == 0 || strcmp(type_name, "string") == 0;
 }
 
+/* Returns element byte size for a given type name. "byte" → 1, everything else → 4. */
+static int elem_size_of_type(const char* type_name) {
+  if (type_name && strcmp(type_name, "byte") == 0) return 1;
+  return 4;
+}
+
 static void base_type_name(const char* type_name, char* out, size_t out_sz) {
   if (!out || out_sz == 0) return;
   out[0] = '\0';
@@ -1819,6 +1825,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
           strcat(buf, " ");
           node_to_code(stmt->children[0], buf + strlen(buf),
                        sizeof(buf) - strlen(buf));
+          for (int _pi = 1; _pi < stmt->child_count; ++_pi) {
+            if (is_postfix_label(stmt->children[_pi]->label))
+              append_postfix_node(stmt->children[_pi], buf, sizeof(buf));
+          }
         }
         if (buf[strlen(buf) - 1] != ';')
           strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
@@ -2234,6 +2244,10 @@ static CFGNode* build_cfg_from_tree_internal(CfgBuilderState* st,
       strcat(buf, " ");
       node_to_code(tree->children[0], buf + strlen(buf),
                    sizeof(buf) - strlen(buf));
+      for (int _pi = 1; _pi < tree->child_count; ++_pi) {
+        if (is_postfix_label(tree->children[_pi]->label))
+          append_postfix_node(tree->children[_pi], buf, sizeof(buf));
+      }
     }
     if (buf[strlen(buf) - 1] != ';')
       strncat(buf, ";", sizeof(buf) - strlen(buf) - 1);
@@ -2959,7 +2973,13 @@ static int type_without_array_dim(const char* type_name, char* out,
   if (!type_name || !out || out_sz == 0) return 0;
   out[0] = '\0';
   lb = strchr(type_name, '[');
-  if (!lb) return 0;
+  if (!lb) {
+    /* No array dimension suffix — type_name IS already the element type. */
+    strncpy(out, type_name, out_sz - 1);
+    out[out_sz - 1] = '\0';
+    trim_whitespace(out);
+    return out[0] != '\0';
+  }
   n = (size_t)(lb - type_name);
   if (n >= out_sz) n = out_sz - 1;
   memcpy(out, type_name, n);
@@ -3422,6 +3442,8 @@ static void dfs_postorder(CFGNode* node, bool* visited, int max_id, int* order,
 }
 
 static char* take_pending_label(char** pending_label);
+static int resolve_array_element_type(SymbolTable* st, const char* array_expr,
+                                      char* out_type, size_t out_type_sz);
 static void eval_arg_to_reg(const char* tok, int dst_reg, SymbolTable* st,
                             Instr** head, Instr** tail,
                             char** pending_label_ptr);
@@ -3569,12 +3591,18 @@ static void load_simple_to_reg(const char* tok, int regno, SymbolTable* st,
     if (split_array_suffix(tok, array_base, sizeof(array_base), array_index,
                            sizeof(array_index)) &&
         array_index[0]) {
+      char _elem_type[128];
+      int _stride;
+      const char* _load_mn;
       emit_load_array_base_ptr(array_base, 10, st, head, tail, lbl);
       *pending_label_ptr = NULL;
       eval_arg_to_reg(array_index, 11, st, head, tail, pending_label_ptr);
-      emit_instr(head, tail, "mul", reg(11), reg(11), imm(VAR_SIZE), NULL);
+      resolve_array_element_type(st, array_base, _elem_type, sizeof(_elem_type));
+      _stride = elem_size_of_type(_elem_type);
+      _load_mn = (_stride == 1) ? "movb" : "mov";
+      emit_instr(head, tail, "mul", reg(11), reg(11), imm(_stride), NULL);
       emit_instr(head, tail, "add", reg(10), reg(10), reg(11), NULL);
-      emit_instr(head, tail, "mov", reg(regno), mem_op(10, 0), zero_reg(),
+      emit_instr(head, tail, _load_mn, reg(regno), mem_op(10, 0), zero_reg(),
                  NULL);
       return;
     }
@@ -3735,19 +3763,22 @@ static void store_reg_to_lvalue(const char* lhs, int src_reg, SymbolTable* st,
                            sizeof(array_index)) &&
         array_index[0]) {
       char element_type[256];
+      int _stride;
+      const char* _store_mn;
       char* lbl = take_pending_label(pending_label_ptr);
       emit_load_array_base_ptr(array_base, 10, st, head, tail, lbl);
       eval_arg_to_reg(array_index, 11, st, head, tail, pending_label_ptr);
-      emit_instr(head, tail, "mul", reg(11), reg(11), imm(VAR_SIZE), NULL);
+      resolve_array_element_type(st, array_base, element_type, sizeof(element_type));
+      _stride = elem_size_of_type(element_type);
+      _store_mn = (_stride == 1) ? "movb" : "mov";
+      emit_instr(head, tail, "mul", reg(11), reg(11), imm(_stride), NULL);
       emit_instr(head, tail, "add", reg(10), reg(10), reg(11), NULL);
-      if (resolve_array_element_type(st, array_base, element_type,
-                                     sizeof(element_type)) &&
-          is_object_type(st, element_type)) {
+      if (is_object_type(st, element_type)) {
         emit_clone_object_to_heap(element_type, src_reg, 12, st, head, tail,
                                   pending_label_ptr);
         emit_instr(head, tail, "mov", mem_op(10, 0), reg(12), zero_reg(), NULL);
       } else {
-        emit_instr(head, tail, "mov", mem_op(10, 0), reg(src_reg), zero_reg(),
+        emit_instr(head, tail, _store_mn, mem_op(10, 0), reg(src_reg), zero_reg(),
                    NULL);
       }
       return;
@@ -3927,6 +3958,16 @@ static void eval_arg_to_reg(const char* tok, int dst_reg, SymbolTable* st,
       emit_instr(head, tail, "mul", reg(4), reg(4), reg(3), NULL);
       emit_instr(head, tail, "sub", reg(4), reg(2), reg(4), NULL);
     }
+    else if (!strcmp(op, "&"))
+      emit_instr(head, tail, "band", reg(4), reg(2), reg(3), NULL);
+    else if (!strcmp(op, "|"))
+      emit_instr(head, tail, "bor",  reg(4), reg(2), reg(3), NULL);
+    else if (!strcmp(op, "^"))
+      emit_instr(head, tail, "bxor", reg(4), reg(2), reg(3), NULL);
+    else if (!strcmp(op, "<<"))
+      emit_instr(head, tail, "bshl", reg(4), reg(2), reg(3), NULL);
+    else if (!strcmp(op, ">>"))
+      emit_instr(head, tail, "bshr", reg(4), reg(2), reg(3), NULL);
     emit_instr(head, tail, "mov", reg(dst_reg), reg(4), zero_reg(), NULL);
     return;
   }
@@ -4599,6 +4640,7 @@ static int emit_builtin_statement_call(const char* fname, char args[][64],
 }
 
 static void emit_heap_array_alloc(const char* elem_count_expr, int dst_reg,
+                                  int elem_bytes,
                                   SymbolTable* st, Instr** head, Instr** tail,
                                   char** pending_label_ptr,
                                   CfgBuilderState* state) {
@@ -4608,7 +4650,7 @@ static void emit_heap_array_alloc(const char* elem_count_expr, int dst_reg,
       (elem_count_expr && elem_count_expr[0]) ? elem_count_expr : "1";
 
   eval_arg_to_reg(count_expr, 2, st, head, tail, pending_label_ptr);
-  emit_instr(head, tail, "mul", reg(2), reg(2), imm(VAR_SIZE), NULL);
+  emit_instr(head, tail, "mul", reg(2), reg(2), imm(elem_bytes), NULL);
   emit_instr(head, tail, "mov", reg(5), imm(BUILTIN_HEAP_PTR_ADDR), zero_reg(),
              take_pending_label(pending_label_ptr));
   emit_instr(head, tail, "mov", reg(6), mem_op(5, 0), zero_reg(), NULL);
@@ -4659,8 +4701,9 @@ static char* generate_single_statement(char* stmt, char* pending_label,
           if (!array_len[0]) {
             snprintf(array_len, sizeof(array_len), "%d", DEFAULT_ARRAY_ELEMS);
           }
-          emit_heap_array_alloc(array_len, 1, st, head, tail, &pending_label,
-                                state);
+          emit_heap_array_alloc(array_len, 1,
+                                elem_size_of_type(decl_type[0] ? decl_type : "int"),
+                                st, head, tail, &pending_label, state);
           store_reg_to_lvalue(array_name, 1, st, head, tail, &pending_label);
           return NULL;
         }
@@ -5241,6 +5284,16 @@ static char* generate_single_statement(char* stmt, char* pending_label,
         emit_instr(head, tail, "mul", reg(4), reg(2), reg(3), NULL);
       else if (!strcmp(op, "/"))
         emit_instr(head, tail, "div", reg(4), reg(2), reg(3), NULL);
+      else if (!strcmp(op, "&"))
+        emit_instr(head, tail, "band", reg(4), reg(2), reg(3), NULL);
+      else if (!strcmp(op, "|"))
+        emit_instr(head, tail, "bor",  reg(4), reg(2), reg(3), NULL);
+      else if (!strcmp(op, "^"))
+        emit_instr(head, tail, "bxor", reg(4), reg(2), reg(3), NULL);
+      else if (!strcmp(op, "<<"))
+        emit_instr(head, tail, "bshl", reg(4), reg(2), reg(3), NULL);
+      else if (!strcmp(op, ">>"))
+        emit_instr(head, tail, "bshr", reg(4), reg(2), reg(3), NULL);
 
       store_reg_to_lvalue(lhs, 4, st, head, tail, &pending_label);
 
@@ -6264,7 +6317,8 @@ void dump_function_asm(FILE* f, FunctionCode* fc) {
     } else if (strcmp(i->mnemonic, "out") == 0) {
       /* out печатаем по src1 */
       print_operand(f, i->src1);
-    } else if (strcmp(i->mnemonic, "mov") == 0) {
+    } else if (strcmp(i->mnemonic, "mov") == 0 ||
+               strcmp(i->mnemonic, "movb") == 0) {
       print_operand(f, i->dst);
       fprintf(f, ", ");
       print_operand(f, i->src1);
@@ -6325,6 +6379,7 @@ static void append_runtime_asm(FILE* out) {
       "src/runtime/pipe_in1.asm",
       "src/runtime/pipe_in2.asm",
       "src/runtime/pipe_typed.asm",
+      "src/runtime/pipe_block.asm",
       "src/runtime/pipe_out.asm",
       "src/runtime/timer.asm",
       "src/runtime/rt_ctx.asm",

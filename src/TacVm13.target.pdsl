@@ -290,6 +290,21 @@ architecture TacVm13 {
             ip = ip + 8;
         };
 
+        instruction movb_mr = {
+            0000 1111,
+            reg as base,
+            reg as src,
+            off16 as off,
+            0000 0000 0000 0000 0000 0000 0000 00
+        } {
+            let signed_off = off;
+            if off >= 0x8000 then
+                signed_off = off - 0x10000;
+            let address = base + signed_off;
+            ram:1[address] = src;
+            ip = ip + 8;
+        };
+
         instruction push_r = {
             0001 0000,
             reg as src,
@@ -711,7 +726,8 @@ architecture TacVm13 {
                     for mov_al(address, value) "[{1}], {2}";
 
         mnemonic movb for movb_rm(dst, base, off) "{1}, [{2} + {3}]",
-                     for movb_ra(dst, address) "{1}, [{2}]";
+                     for movb_ra(dst, address) "{1}, [{2}]",
+                     for movb_mr(base, src, off) "[{1} + {3}], {2}";
 
         mnemonic movh for movh_rm(dst, base, off) "{1}, [{2} + {3}]",
                      for movh_ra(dst, address) "{1}, [{2}]";
@@ -746,4 +762,15 @@ architecture TacVm13 {
         mnemonic in for in_r(dst) "{1}";
         mnemonic out for out_r(src) "{1}",
                      for out_i(value) "#{1}";
+
+        mnemonic band for and_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                      for and_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic bor  for or_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                      for or_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic bxor for xor_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                      for xor_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic bshl for shl_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                      for shl_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
+        mnemonic bshr for shr_rrr(dst, lhs, rhs) "{1}, {2}, {3}",
+                      for shr_rri(dst, lhs, rhs) "{1}, {2}, #{3}";
 }

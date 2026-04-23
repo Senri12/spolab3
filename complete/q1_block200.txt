@@ -1,4 +1,4 @@
-int pipeIn1();
+int pipeBlockReadFast1(byte[] buf, int n);
 void pipeOut(int value);
 
 void printInt(int x) {
@@ -43,56 +43,62 @@ void printLabelValue(int value) {
     pipeOut('\n');
 }
 
-void initReader(int[] state) {
+int getElem(byte[] arr, int pos) {
+    return arr[pos];
+}
+
+void initReader(byte[] buf, int[] state) {
     state[0] = 0;
     state[1] = 0;
 }
 
-int readByte(int[] state) {
+int readByte(byte[] buf, int[] state) {
     int ch = 0;
     if (state[1] <= 0) {
-        state[0] = pipeIn1();
-        state[1] = 4;
+        pipeBlockReadFast1(buf, 256);
+        state[0] = 0;
+        state[1] = 256;
     }
-    ch = state[0] & 255;
-    state[0] = state[0] >> 8;
+    ch = getElem(buf, state[0]);
+    state[0] = state[0] + 1;
     state[1] = state[1] - 1;
     return ch;
 }
 
-void skipBom(int[] state) {
+void skipBom(byte[] buf, int[] state) {
     int b0 = 0;
     int b1 = 0;
     int b2 = 0;
 
-    b0 = readByte(state);
+    b0 = readByte(buf, state);
     if (b0 == 239) {
-        b1 = readByte(state);
-        b2 = readByte(state);
+        b1 = readByte(buf, state);
+        b2 = readByte(buf, state);
         return;
     }
 }
 
-void skipHeader(int[] state) {
+void skipHeader(byte[] buf, int[] state) {
     int ch = 0;
 
-    ch = readByte(state);
+    ch = readByte(buf, state);
     while (ch != '\n') {
-        ch = readByte(state);
+        ch = readByte(buf, state);
     }
 }
 
-void skipToLineEnd(int[] state) {
+void skipToLineEnd(byte[] buf, int[] state) {
     int ch = 0;
 
-    ch = readByte(state);
+    ch = readByte(buf, state);
     while (ch != '\n') {
-        ch = readByte(state);
+        ch = readByte(buf, state);
     }
 }
 
 int processVed() {
-    int reader[2];
+    byte buf[256];
+    int state[2];
     int ch = 0;
     int field = 1;
     int id = 0;
@@ -101,12 +107,12 @@ int processVed() {
     int rowCount = 0;
     int count = 0;
 
-    initReader(reader);
-    skipBom(reader);
-    skipHeader(reader);
+    initReader(buf, state);
+    skipBom(buf, state);
+    skipHeader(buf, state);
 
     while (rowCount < 200) {
-        ch = readByte(reader);
+        ch = readByte(buf, state);
 
         if (ch == '\r') {
             continue;
@@ -127,7 +133,7 @@ int processVed() {
             }
             else {
                 if (field == 8) {
-                    skipToLineEnd(reader);
+                    skipToLineEnd(buf, state);
 
                     if (id > 1250981 && tvId == 1) {
                         printRow(1, chlvkId);

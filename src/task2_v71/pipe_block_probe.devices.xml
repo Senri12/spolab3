@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VmDevicesConfiguration xmlns="Portable.TargetPlatform.Vm.Devices">
+  <DeviceType Name="SimplePipe" Id="3" />
+
+  <Device DeviceType="SimplePipe" Name="Input0" Id="10">
+    <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="196608" Length="128" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:build/task2_v71/q2.lyudi_dbg.noheader.csv:out:build/task2_v71/pipe_block_probe.unused.txt" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+
+  <Device DeviceType="SimplePipe" Name="Output" Id="12">
+    <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="1000032" Length="80" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:src/task2_v71/raw_pipe.empty.in:out:build/task2_v71/pipe_block_probe.result.txt" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+</VmDevicesConfiguration>
