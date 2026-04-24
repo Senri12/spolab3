@@ -1,7 +1,7 @@
 // Variant 71, Task 2: 3-thread pipeline
 //   Thread 0 (typesParser): reads N_ТИПЫ_ВЕДОМОСТЕЙ from Input0 (ch0)
-//   Thread 1 (vedParser):   reads N_ВЕДОМОСТИ from Input1 (ch1), filters id > 1250981
-//   Thread 2 (printer):     accumulates type IDs, joins with veds, outputs tvId;chlvkId
+//   Thread 1 (vedParser):   reads N_ВЕДОМОСТИ from Input1 (ch1), sends all triples
+//   Thread 2 (printer):     accumulates type IDs, filters/joins, outputs tvId;chlvkId
 
 void ctxInit();
 void ctxReset();
@@ -344,8 +344,8 @@ void typesParser(int dummy) {
 }
 
 // ============================================================
-// Thread 1: reads N_ВЕДОМОСТИ, filters id > 1250981,
-//           sends (tvId, chlvkId) pairs to qStream(1).
+// Thread 1: reads N_ВЕДОМОСТИ and sends (id, tvId, chlvkId)
+//           triples to qStream(1). Filtering is done by printer.
 // Ved CSV fields: id(1); chlvkId(2); f3; f4; f5; f6; f7; tvId(8); ...
 // ============================================================
 
