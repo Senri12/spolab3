@@ -6371,6 +6371,10 @@ static void append_runtime_asm_file(FILE* out, const char* path) {
 }
 
 static void append_runtime_asm(FILE* out) {
+  // rt_threads.asm is NOT auto-included because it contains a bridge stub
+  // (taskBody: jmp global_taskBody_1_int) that requires the source program
+  // to define `void taskBody(int)`. Programs that use funcAddr(taskBody) must
+  // link rt_threads.asm explicitly via the assembler's ExtraAsmFiles option.
   static const char* runtime_files[] = {
       "src/runtime/in.asm",
       "src/runtime/out.asm",
@@ -6383,7 +6387,6 @@ static void append_runtime_asm(FILE* out) {
       "src/runtime/pipe_out.asm",
       "src/runtime/timer.asm",
       "src/runtime/rt_ctx.asm",
-      "src/runtime/rt_threads.asm",
       NULL,
   };
 

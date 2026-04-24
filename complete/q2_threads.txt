@@ -1,0 +1,461 @@
+// Variant 71, Task 2: 3-thread pipeline
+//   Thread 0 (typesParser): reads N_ТИПЫ_ВЕДОМОСТЕЙ from Input0 (ch0)
+//   Thread 1 (vedParser):   reads N_ВЕДОМОСТИ from Input1 (ch1), filters id > 1250981
+//   Thread 2 (printer):     accumulates type IDs, joins with veds, outputs tvId;chlvkId
+
+void ctxInit();
+void ctxReset();
+void ctxCreate(int func_addr, int arg);
+void ctxDispatch(int to_idx);
+void ctxYield();
+void ctxExit();
+int ctxCurrentTask();
+
+int pipeIn0();
+int pipeIn1();
+void pipeOut(int value);
+
+int memLoad(int addr);
+void memStore(int addr, int value);
+
+// ============================================================
+// Output helpers
+// ============================================================
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printRow(int tvId, int chlvkId) {
+    printInt(tvId);
+    pipeOut(59);
+    printInt(chlvkId);
+    pipeOut('\n');
+}
+
+void printLabelValue(int value) {
+    pipeOut('#');
+    printInt(value);
+    pipeOut('\n');
+}
+
+// ============================================================
+// Software SPSC ring buffer (capacity 16) backed by memLoad/memStore.
+//
+// Stream S layout (S in {0,1}):
+//   base = 810000 + S * 1024
+//   buffer[0..15] : base + 0  .. base + 60  (4 bytes each)
+//   head          : base + 64
+//   tail          : base + 68
+//   count         : base + 72
+//   closed        : base + 76
+// ============================================================
+
+int streamBase(int s) {
+    if (s == 0) {
+        return 810000;
+    }
+    return 811024;
+}
+
+void qStreamInit(int s) {
+    int base = streamBase(s);
+    memStore(base + 64, 0);
+    memStore(base + 68, 0);
+    memStore(base + 72, 0);
+    memStore(base + 76, 0);
+}
+
+void qStreamWrite(int s, int value) {
+    int base = streamBase(s);
+    int count = memLoad(base + 72);
+    while (count >= 16) {
+        ctxYield();
+        count = memLoad(base + 72);
+    }
+    int tail = memLoad(base + 68);
+    memStore(base + tail * 4, value);
+    tail = tail + 1;
+    if (tail >= 16) {
+        tail = 0;
+    }
+    memStore(base + 68, tail);
+    count = count + 1;
+    memStore(base + 72, count);
+}
+
+int qStreamRead(int s) {
+    int base = streamBase(s);
+    int count = memLoad(base + 72);
+    int head = 0;
+    int value = 0;
+    while (count <= 0) {
+        int closed = memLoad(base + 76);
+        if (closed != 0) {
+            return -1;
+        }
+        ctxYield();
+        count = memLoad(base + 72);
+    }
+    head = memLoad(base + 64);
+    value = memLoad(base + head * 4);
+    head = head + 1;
+    if (head >= 16) {
+        head = 0;
+    }
+    memStore(base + 64, head);
+    count = count - 1;
+    memStore(base + 72, count);
+    return value;
+}
+
+void qStreamClose(int s) {
+    memStore(streamBase(s) + 76, 1);
+}
+
+// ============================================================
+// Thread completion helpers.
+// TCB layout (rt_ctx.asm): TCB[i] at 502000 + i*8, status at +4.
+// ============================================================
+
+int taskState(int i) {
+    return memLoad(502000 + i * 8 + 4);
+}
+
+int finishedCount() {
+    int done = 0;
+    if (taskState(1) == 3) { done = done + 1; }
+    if (taskState(2) == 3) { done = done + 1; }
+    if (taskState(3) == 3) { done = done + 1; }
+    return done;
+}
+
+int nextRunnable(int current) {
+    int idx = current + 1;
+    int tries = 0;
+    if (idx >= 3) {
+        idx = 0;
+    }
+    while (tries < 3) {
+        if (taskState(idx + 1) != 3) {
+            return idx;
+        }
+        idx = idx + 1;
+        if (idx >= 3) {
+            idx = 0;
+        }
+        tries = tries + 1;
+    }
+    return -1;
+}
+
+// ============================================================
+// CSV byte reader: 1 device access per 4 bytes (little-endian unpack).
+// state[0] = packed word remainder, state[1] = bytes left in word (0..4).
+// ============================================================
+
+int deviceReadWord(int dev) {
+    if (dev == 0) {
+        return pipeIn0();
+    }
+    return pipeIn1();
+}
+
+void initReader(int[] state) {
+    state[0] = 0;
+    state[1] = 0;
+}
+
+int readByte(int dev, int[] state) {
+    int nextWord = 0;
+    int base = 0;
+    int ch = 0;
+    if (state[1] == 0) {
+        state[0] = deviceReadWord(dev);
+        state[1] = 4;
+    }
+    nextWord = state[0] / 256;
+    base = nextWord * 256;
+    ch = state[0] - base;
+    if (ch < 0) {
+        ch = ch + 256;
+        nextWord = nextWord - 1;
+    }
+    state[0] = nextWord;
+    state[1] = state[1] - 1;
+    return ch;
+}
+
+void skipBom(int dev, int[] state) {
+    int b0 = readByte(dev, state);
+    if (b0 == 239) {
+        readByte(dev, state);
+        readByte(dev, state);
+    }
+}
+
+void skipHeader(int dev, int[] state) {
+    int ch = readByte(dev, state);
+    while (ch != '\n') {
+        ch = readByte(dev, state);
+    }
+}
+
+void skipLine(int dev, int[] state) {
+    int ch = readByte(dev, state);
+    while (ch != '\n') {
+        ch = readByte(dev, state);
+    }
+}
+
+void skipField(int dev, int[] state) {
+    int ch = readByte(dev, state);
+    int active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    ch = readByte(dev, state);
+                }
+            }
+        }
+    }
+}
+
+int readIntField(int dev, int[] state) {
+    int result = 0;
+    int ch = 0;
+    int active = 0;
+    ch = readByte(dev, state);
+    if (ch == '"') {
+        ch = readByte(dev, state);
+    }
+    active = 1;
+    while (active != 0) {
+        if (ch == ';') {
+            active = 0;
+        }
+        else {
+            if (ch == '\n') {
+                active = 0;
+            }
+            else {
+                if (ch == '\r') {
+                    active = 0;
+                }
+                else {
+                    if (ch >= '0' && ch <= '9') {
+                        result = result * 10;
+                        result = result + ch - '0';
+                    }
+                    ch = readByte(dev, state);
+                }
+            }
+        }
+    }
+    return result;
+}
+
+// ============================================================
+// Thread 0: reads N_ТИПЫ_ВЕДОМОСТЕЙ, sends typeId to qStream(0).
+// Types CSV: 3 data rows, format: ID;Name;...
+// ============================================================
+
+void typesParser(int dummy) {
+    int reader[2];
+    int typeId = 0;
+    int rows = 0;
+
+    initReader(reader);
+    skipBom(0, reader);
+    skipHeader(0, reader);
+
+    while (rows < 3) {
+        typeId = readIntField(0, reader);
+        skipLine(0, reader);
+        qStreamWrite(0, typeId);
+        rows = rows + 1;
+        ctxYield();
+    }
+
+    qStreamClose(0);
+    ctxExit();
+}
+
+// ============================================================
+// Thread 1: reads N_ВЕДОМОСТИ, filters id > 1250981,
+//           sends (tvId, chlvkId) pairs to qStream(1).
+// Ved CSV fields: id(1); chlvkId(2); f3; f4; f5; f6; f7; tvId(8); ...
+// ============================================================
+
+void vedParser(int dummy) {
+    int reader[2];
+    int id = 0;
+    int chlvkId = 0;
+    int tvId = 0;
+    int rows = 0;
+
+    initReader(reader);
+    skipBom(1, reader);
+    skipHeader(1, reader);
+
+    while (rows < 200) {
+        id = readIntField(1, reader);
+        chlvkId = readIntField(1, reader);
+        skipField(1, reader);
+        skipField(1, reader);
+        skipField(1, reader);
+        skipField(1, reader);
+        skipField(1, reader);
+        tvId = readIntField(1, reader);
+        skipLine(1, reader);
+
+        if (id > 1250981) {
+            qStreamWrite(1, tvId);
+            qStreamWrite(1, chlvkId);
+        }
+        rows = rows + 1;
+        ctxYield();
+    }
+
+    qStreamClose(1);
+    ctxExit();
+}
+
+// ============================================================
+// Thread 2: printer.
+//   Phase 1 — drain qStream(0): build type ID table in memory
+//             (at 760000: count, 760004+: id array).
+//   Phase 2 — drain qStream(1): output rows where tvId in type table.
+// ============================================================
+
+void printer(int dummy) {
+    int typeId = 0;
+    int typesCount = 0;
+    int tvId = 0;
+    int chlvkId = 0;
+    int count = 0;
+    int i = 0;
+    int found = 0;
+
+    memStore(760000, 0);
+
+    typeId = qStreamRead(0);
+    while (typeId != -1) {
+        typesCount = memLoad(760000);
+        memStore(760004 + typesCount * 4, typeId);
+        memStore(760000, typesCount + 1);
+        typeId = qStreamRead(0);
+        ctxYield();
+    }
+
+    printLabelValue(7);
+    typesCount = memLoad(760000);
+
+    tvId = qStreamRead(1);
+    while (tvId != -1) {
+        chlvkId = qStreamRead(1);
+
+        found = 0;
+        i = 0;
+        while (i < typesCount) {
+            if (memLoad(760004 + i * 4) == tvId) {
+                found = 1;
+            }
+            i = i + 1;
+        }
+
+        if (found != 0) {
+            printRow(tvId, chlvkId);
+            count = count + 1;
+        }
+
+        tvId = qStreamRead(1);
+        ctxYield();
+    }
+
+    printLabelValue(count);
+    ctxExit();
+}
+
+// ============================================================
+// taskBody: entry point for all threads (dispatched by stage arg).
+// ============================================================
+
+void taskBody(int stage) {
+    if (stage == 0) {
+        typesParser(0);
+        return;
+    }
+    if (stage == 1) {
+        vedParser(0);
+        return;
+    }
+    printer(0);
+}
+
+// ============================================================
+// main: init scheduler, create 3 threads, round-robin dispatch.
+// ============================================================
+
+int main() {
+    int current = -1;
+    int done = 0;
+    int addr = 0;
+
+    ctxInit();
+    ctxReset();
+
+    qStreamInit(0);
+    qStreamInit(1);
+    memStore(760000, 0);
+
+    addr = funcAddr(taskBody);
+    ctxCreate(addr, 0);
+    ctxCreate(addr, 1);
+    ctxCreate(addr, 2);
+
+    done = finishedCount();
+    while (done < 3) {
+        current = nextRunnable(current);
+        if (current >= 0) {
+            ctxDispatch(current + 1);
+        }
+        done = finishedCount();
+    }
+
+    return 0;
+}

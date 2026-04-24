@@ -1,0 +1,85 @@
+// Minimal threading test: 2 threads output letters, main drives scheduler.
+// Expected output: "ABABABABABABABAB\n"
+//
+// Uses runtime rt_threads.asm explicitly (via -ExtraAsmFiles) for the
+// taskBody bridge required by funcAddr(taskBody).
+
+void ctxInit();
+void ctxReset();
+void ctxCreate(int func_addr, int arg);
+void ctxDispatch(int to_idx);
+void ctxYield();
+void ctxExit();
+int ctxCurrentTask();
+
+void pipeOut(int value);
+
+int memLoad(int addr);
+void memStore(int addr, int value);
+
+int taskStateOf(int i) {
+    return memLoad(502000 + i * 8 + 4);
+}
+
+int finishedCount() {
+    int done = 0;
+    if (taskStateOf(1) == 3) { done = done + 1; }
+    if (taskStateOf(2) == 3) { done = done + 1; }
+    return done;
+}
+
+void taskA(int dummy) {
+    int i = 0;
+    while (i < 8) {
+        pipeOut('A');
+        i = i + 1;
+        ctxYield();
+    }
+    ctxExit();
+}
+
+void taskB(int dummy) {
+    int i = 0;
+    while (i < 8) {
+        pipeOut('B');
+        i = i + 1;
+        ctxYield();
+    }
+    ctxExit();
+}
+
+void taskBody(int stage) {
+    if (stage == 0) {
+        taskA(0);
+        return;
+    }
+    taskB(0);
+}
+
+int main() {
+    int addr = 0;
+    int current = 1;
+    int done = 0;
+
+    ctxInit();
+    ctxReset();
+
+    addr = funcAddr(taskBody);
+    ctxCreate(addr, 0);
+    ctxCreate(addr, 1);
+
+    done = finishedCount();
+    while (done < 2) {
+        if (taskStateOf(current) != 3) {
+            ctxDispatch(current);
+        }
+        current = current + 1;
+        if (current > 2) {
+            current = 1;
+        }
+        done = finishedCount();
+    }
+
+    pipeOut('\n');
+    return 0;
+}

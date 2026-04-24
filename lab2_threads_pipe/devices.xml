@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VmDevicesConfiguration xmlns="Portable.TargetPlatform.Vm.Devices">
+  <DeviceType Name="SimplePic" Id="1" />
+  <DeviceType Name="SimpleClock" Id="2" />
+  <DeviceType Name="SimplePipe" Id="3" />
+
+  <Device DeviceType="SimplePic" Name="pic0" Id="1">
+    <IoPortMap PortType="state" Id="1" BankName="DATA" Mode="RAM">
+      <InitialBinding StartAddress="0x2A000" Length="0x0030" />
+    </IoPortMap>
+    <IoPortMap PortType="handlers-map" Id="2" BankName="DATA" Mode="RAM">
+      <InitialBinding StartAddress="0x2A100" Length="0x0200" />
+    </IoPortMap>
+    <Parameter Name="HandlersTableEntrySize" Value="8" />
+  </Device>
+
+  <Device DeviceType="SimpleClock" Name="clock0" Id="2">
+    <Signal Name="on-cycles" Id="0" Interrupt="0" />
+    <Parameter Name="CyclesSignalPeriod" Value="500" />
+    <IoPortMap PortType="state" Id="1" BankName="DATA" Mode="RAM">
+      <InitialBinding StartAddress="0x2B000" Length="0x0080" />
+    </IoPortMap>
+  </Device>
+
+  <Device DeviceType="SimplePipe" Name="StdIo" Id="3">
+    <IoPortMap PortType="control" Id="1" BankName="DATA" Mode="RAM">
+      <InitialBinding StartAddress="0x2C000" Length="0x0080" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:/tmp/test_vedmosti.csv:out:/tmp/lab2_output.txt" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+
+
+</VmDevicesConfiguration>

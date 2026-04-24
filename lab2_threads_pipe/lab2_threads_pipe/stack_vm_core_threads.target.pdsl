@@ -1,0 +1,1075 @@
+// StackVM core-only architecture for teacher-first asm path.
+// Keeps the current stack ISA and memory layout, but removes the local
+// scheduler/task/pipe custom ABI from the target itself.
+
+architecture StackVMCore {
+
+    memory:
+        range CODE [0x00000000..0x0000FFFF] {
+            cell = 8;
+            endianess = big-endian;
+            granularity = 1;
+        }
+
+        range CONSTANTS [0x00010000..0x0001FFFF] {
+            cell = 8;
+            endianess = little-endian;
+            granularity = 1;
+        }
+
+        range DATA [0x00020000..0xFFFFFFFF] {
+            cell = 8;
+            endianess = little-endian;
+            granularity = 1;
+        }
+
+    registers:
+        storage PC[32];
+        view pc = PC;
+
+        storage SP[32];
+        view sp = SP;
+
+        storage RP[32];
+        view rp = RP;
+
+        storage RUNNING[8];
+        view running = RUNNING;
+
+        storage IN[8];
+        storage OUT[8];
+        view stdin = IN;
+        view stdout = OUT;
+
+    instructions:
+        encode imm32 field = immediate[32] data;
+        encode constIdx field = immediate[32] data;
+        encode varIdx field = immediate[32] data;
+        encode jumpAddr field = immediate[32] offset;
+
+    instructions:
+        instruction ldc = { 00000000, constIdx as idx } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot]     = CONSTANTS[idx + 7];
+            DATA[slot + 1] = CONSTANTS[idx + 6];
+            DATA[slot + 2] = CONSTANTS[idx + 5];
+            DATA[slot + 3] = CONSTANTS[idx + 4];
+            DATA[slot + 4] = CONSTANTS[idx + 3];
+            DATA[slot + 5] = CONSTANTS[idx + 2];
+            DATA[slot + 6] = CONSTANTS[idx + 1];
+            DATA[slot + 7] = CONSTANTS[idx];
+            SP = SP + 1;
+            PC = PC + 5;
+        };
+
+        instruction ldv = { 00000001, varIdx as idx } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot] = DATA[idx];
+            DATA[slot + 1] = DATA[idx + 1];
+            DATA[slot + 2] = DATA[idx + 2];
+            DATA[slot + 3] = DATA[idx + 3];
+            DATA[slot + 4] = DATA[idx + 4];
+            DATA[slot + 5] = DATA[idx + 5];
+            DATA[slot + 6] = DATA[idx + 6];
+            DATA[slot + 7] = DATA[idx + 7];
+            SP = SP + 1;
+            PC = PC + 5;
+        };
+
+        instruction stv = { 00000010, varIdx as idx } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                DATA[idx] = DATA[slot];
+                DATA[idx + 1] = DATA[slot + 1];
+                DATA[idx + 2] = DATA[slot + 2];
+                DATA[idx + 3] = DATA[slot + 3];
+                DATA[idx + 4] = DATA[slot + 4];
+                DATA[idx + 5] = DATA[slot + 5];
+                DATA[idx + 6] = DATA[slot + 6];
+                DATA[idx + 7] = DATA[slot + 7];
+            }
+            PC = PC + 5;
+        };
+
+        instruction add = { 00000011 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = lhs + rhs;
+                DATA[lhsSlot] = result & 0xff;
+                DATA[lhsSlot + 1] = (result >> 8) & 0xff;
+                DATA[lhsSlot + 2] = (result >> 16) & 0xff;
+                DATA[lhsSlot + 3] = (result >> 24) & 0xff;
+                DATA[lhsSlot + 4] = (result >> 32) & 0xff;
+                DATA[lhsSlot + 5] = (result >> 40) & 0xff;
+                DATA[lhsSlot + 6] = (result >> 48) & 0xff;
+                DATA[lhsSlot + 7] = (result >> 56) & 0xff;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction sub = { 00000100 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = lhs - rhs;
+                DATA[lhsSlot] = result & 0xff;
+                DATA[lhsSlot + 1] = (result >> 8) & 0xff;
+                DATA[lhsSlot + 2] = (result >> 16) & 0xff;
+                DATA[lhsSlot + 3] = (result >> 24) & 0xff;
+                DATA[lhsSlot + 4] = (result >> 32) & 0xff;
+                DATA[lhsSlot + 5] = (result >> 40) & 0xff;
+                DATA[lhsSlot + 6] = (result >> 48) & 0xff;
+                DATA[lhsSlot + 7] = (result >> 56) & 0xff;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction mul = { 00000101 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = lhs * rhs;
+                DATA[lhsSlot] = result & 0xff;
+                DATA[lhsSlot + 1] = (result >> 8) & 0xff;
+                DATA[lhsSlot + 2] = (result >> 16) & 0xff;
+                DATA[lhsSlot + 3] = (result >> 24) & 0xff;
+                DATA[lhsSlot + 4] = (result >> 32) & 0xff;
+                DATA[lhsSlot + 5] = (result >> 40) & 0xff;
+                DATA[lhsSlot + 6] = (result >> 48) & 0xff;
+                DATA[lhsSlot + 7] = (result >> 56) & 0xff;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction div = { 00000110 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                if rhs != 0 then {
+                    SP = SP - 1;
+                    let lhsSlot = 0x0002E000 + SP * 8;
+                    let lhs = DATA[lhsSlot]
+                        | (DATA[lhsSlot + 1] << 8)
+                        | (DATA[lhsSlot + 2] << 16)
+                        | (DATA[lhsSlot + 3] << 24)
+                        | (DATA[lhsSlot + 4] << 32)
+                        | (DATA[lhsSlot + 5] << 40)
+                        | (DATA[lhsSlot + 6] << 48)
+                        | (DATA[lhsSlot + 7] << 56);
+                    let result = lhs / rhs;
+                    DATA[lhsSlot] = result & 0xff;
+                    DATA[lhsSlot + 1] = (result >> 8) & 0xff;
+                    DATA[lhsSlot + 2] = (result >> 16) & 0xff;
+                    DATA[lhsSlot + 3] = (result >> 24) & 0xff;
+                    DATA[lhsSlot + 4] = (result >> 32) & 0xff;
+                    DATA[lhsSlot + 5] = (result >> 40) & 0xff;
+                    DATA[lhsSlot + 6] = (result >> 48) & 0xff;
+                    DATA[lhsSlot + 7] = (result >> 56) & 0xff;
+                    SP = SP + 1;
+                } else {
+                    SP = SP - 1;
+                }
+            }
+            PC = PC + 1;
+        };
+
+        instruction mod = { 00000111 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                if rhs != 0 then {
+                    SP = SP - 1;
+                    let lhsSlot = 0x0002E000 + SP * 8;
+                    let lhs = DATA[lhsSlot]
+                        | (DATA[lhsSlot + 1] << 8)
+                        | (DATA[lhsSlot + 2] << 16)
+                        | (DATA[lhsSlot + 3] << 24)
+                        | (DATA[lhsSlot + 4] << 32)
+                        | (DATA[lhsSlot + 5] << 40)
+                        | (DATA[lhsSlot + 6] << 48)
+                        | (DATA[lhsSlot + 7] << 56);
+                    let result = lhs % rhs;
+                    DATA[lhsSlot] = result & 0xff;
+                    DATA[lhsSlot + 1] = (result >> 8) & 0xff;
+                    DATA[lhsSlot + 2] = (result >> 16) & 0xff;
+                    DATA[lhsSlot + 3] = (result >> 24) & 0xff;
+                    DATA[lhsSlot + 4] = (result >> 32) & 0xff;
+                    DATA[lhsSlot + 5] = (result >> 40) & 0xff;
+                    DATA[lhsSlot + 6] = (result >> 48) & 0xff;
+                    DATA[lhsSlot + 7] = (result >> 56) & 0xff;
+                    SP = SP + 1;
+                } else {
+                    SP = SP - 1;
+                }
+            }
+            PC = PC + 1;
+        };
+
+        instruction neg = { 00001000 } {
+            if SP > 0 then {
+                let slot = 0x0002E000 + (SP - 1) * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                let result = 0 - value;
+                DATA[slot] = result & 0xff;
+                DATA[slot + 1] = (result >> 8) & 0xff;
+                DATA[slot + 2] = (result >> 16) & 0xff;
+                DATA[slot + 3] = (result >> 24) & 0xff;
+                DATA[slot + 4] = (result >> 32) & 0xff;
+                DATA[slot + 5] = (result >> 40) & 0xff;
+                DATA[slot + 6] = (result >> 48) & 0xff;
+                DATA[slot + 7] = (result >> 56) & 0xff;
+            }
+            PC = PC + 1;
+        };
+
+        instruction lt = { 00001001 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs < rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction gt = { 00001010 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs > rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction le = { 00001011 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs <= rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction ge = { 00001100 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs >= rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction eq = { 00001101 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs == rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction ne = { 00001110 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs != rhs then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction land = { 00001111 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs != 0 && rhs != 0 then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction lor = { 00010000 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let rhsSlot = 0x0002E000 + SP * 8;
+                let rhs = DATA[rhsSlot]
+                    | (DATA[rhsSlot + 1] << 8)
+                    | (DATA[rhsSlot + 2] << 16)
+                    | (DATA[rhsSlot + 3] << 24)
+                    | (DATA[rhsSlot + 4] << 32)
+                    | (DATA[rhsSlot + 5] << 40)
+                    | (DATA[rhsSlot + 6] << 48)
+                    | (DATA[rhsSlot + 7] << 56);
+                SP = SP - 1;
+                let lhsSlot = 0x0002E000 + SP * 8;
+                let lhs = DATA[lhsSlot]
+                    | (DATA[lhsSlot + 1] << 8)
+                    | (DATA[lhsSlot + 2] << 16)
+                    | (DATA[lhsSlot + 3] << 24)
+                    | (DATA[lhsSlot + 4] << 32)
+                    | (DATA[lhsSlot + 5] << 40)
+                    | (DATA[lhsSlot + 6] << 48)
+                    | (DATA[lhsSlot + 7] << 56);
+                let result = 0;
+                if lhs != 0 || rhs != 0 then result = 1;
+                DATA[lhsSlot] = result;
+                DATA[lhsSlot + 1] = 0;
+                DATA[lhsSlot + 2] = 0;
+                DATA[lhsSlot + 3] = 0;
+                DATA[lhsSlot + 4] = 0;
+                DATA[lhsSlot + 5] = 0;
+                DATA[lhsSlot + 6] = 0;
+                DATA[lhsSlot + 7] = 0;
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction lnot = { 00010001 } {
+            if SP > 0 then {
+                let slot = 0x0002E000 + (SP - 1) * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                let result = 0;
+                if value == 0 then result = 1;
+                DATA[slot] = result;
+                DATA[slot + 1] = 0;
+                DATA[slot + 2] = 0;
+                DATA[slot + 3] = 0;
+                DATA[slot + 4] = 0;
+                DATA[slot + 5] = 0;
+                DATA[slot + 6] = 0;
+                DATA[slot + 7] = 0;
+            }
+            PC = PC + 1;
+        };
+
+        instruction jmp = { 00010010, jumpAddr as addr } {
+            PC = addr;
+        };
+
+        instruction jz = { 00010011, jumpAddr as addr } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                if value == 0 then {
+                    PC = addr;
+                } else {
+                    PC = PC + 5;
+                }
+            } else {
+                PC = PC + 5;
+            }
+        };
+
+        instruction jnz = { 00010100, jumpAddr as addr } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                if value != 0 then {
+                    PC = addr;
+                } else {
+                    PC = PC + 5;
+                }
+            } else {
+                PC = PC + 5;
+            }
+        };
+
+        instruction call = { 00010101, jumpAddr as addr } {
+            let slot = 0x0002F000 + RP * 8;
+            let retaddr = PC + 5;
+            DATA[slot] = retaddr & 0xff;
+            DATA[slot + 1] = (retaddr >> 8) & 0xff;
+            DATA[slot + 2] = (retaddr >> 16) & 0xff;
+            DATA[slot + 3] = (retaddr >> 24) & 0xff;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            RP = RP + 1;
+            PC = addr;
+        };
+
+        instruction ret = { 00010110 } {
+            if RP > 0 then {
+                RP = RP - 1;
+                let slot = 0x0002F000 + RP * 8;
+                PC = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24);
+            } else {
+                PC = PC + 1;
+            }
+        };
+
+        instruction print = { 00010111 } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                OUT = value & 0xff;
+            }
+            PC = PC + 1;
+        };
+
+        instruction input = { 00011000 } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot] = IN;
+            DATA[slot + 1] = 0;
+            DATA[slot + 2] = 0;
+            DATA[slot + 3] = 0;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        instruction pop = { 00011001 } {
+            if SP > 0 then
+                SP = SP - 1;
+            PC = PC + 1;
+        };
+
+        instruction dup = { 00011010 } {
+            if SP > 0 then {
+                let src = 0x0002E000 + (SP - 1) * 8;
+                let dst = 0x0002E000 + SP * 8;
+                DATA[dst] = DATA[src];
+                DATA[dst + 1] = DATA[src + 1];
+                DATA[dst + 2] = DATA[src + 2];
+                DATA[dst + 3] = DATA[src + 3];
+                DATA[dst + 4] = DATA[src + 4];
+                DATA[dst + 5] = DATA[src + 5];
+                DATA[dst + 6] = DATA[src + 6];
+                DATA[dst + 7] = DATA[src + 7];
+                SP = SP + 1;
+            }
+            PC = PC + 1;
+        };
+
+        instruction inc = { 00011011, varIdx as idx } {
+            let value = DATA[idx]
+                | (DATA[idx + 1] << 8)
+                | (DATA[idx + 2] << 16)
+                | (DATA[idx + 3] << 24)
+                | (DATA[idx + 4] << 32)
+                | (DATA[idx + 5] << 40)
+                | (DATA[idx + 6] << 48)
+                | (DATA[idx + 7] << 56);
+            let result = value + 1;
+            DATA[idx] = result & 0xff;
+            DATA[idx + 1] = (result >> 8) & 0xff;
+            DATA[idx + 2] = (result >> 16) & 0xff;
+            DATA[idx + 3] = (result >> 24) & 0xff;
+            DATA[idx + 4] = (result >> 32) & 0xff;
+            DATA[idx + 5] = (result >> 40) & 0xff;
+            DATA[idx + 6] = (result >> 48) & 0xff;
+            DATA[idx + 7] = (result >> 56) & 0xff;
+            PC = PC + 5;
+        };
+
+        instruction dec = { 00011100, varIdx as idx } {
+            let value = DATA[idx]
+                | (DATA[idx + 1] << 8)
+                | (DATA[idx + 2] << 16)
+                | (DATA[idx + 3] << 24)
+                | (DATA[idx + 4] << 32)
+                | (DATA[idx + 5] << 40)
+                | (DATA[idx + 6] << 48)
+                | (DATA[idx + 7] << 56);
+            let result = value - 1;
+            DATA[idx] = result & 0xff;
+            DATA[idx + 1] = (result >> 8) & 0xff;
+            DATA[idx + 2] = (result >> 16) & 0xff;
+            DATA[idx + 3] = (result >> 24) & 0xff;
+            DATA[idx + 4] = (result >> 32) & 0xff;
+            DATA[idx + 5] = (result >> 40) & 0xff;
+            DATA[idx + 6] = (result >> 48) & 0xff;
+            DATA[idx + 7] = (result >> 56) & 0xff;
+            PC = PC + 5;
+        };
+
+        instruction out = { 00011101 } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                let value = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24)
+                    | (DATA[slot + 4] << 32)
+                    | (DATA[slot + 5] << 40)
+                    | (DATA[slot + 6] << 48)
+                    | (DATA[slot + 7] << 56);
+                OUT = value & 0xff;
+            }
+            PC = PC + 1;
+        };
+
+        instruction inb = { 00011110 } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot] = IN;
+            DATA[slot + 1] = 0;
+            DATA[slot + 2] = 0;
+            DATA[slot + 3] = 0;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        instruction dataload = { 01010011 } {
+            let addr = 0;
+            if SP > 0 then {
+                SP = SP - 1;
+                let aslot = 0x0002E000 + SP * 8;
+                addr = DATA[aslot]
+                    | (DATA[aslot + 1] << 8)
+                    | (DATA[aslot + 2] << 16)
+                    | (DATA[aslot + 3] << 24)
+                    | (DATA[aslot + 4] << 32)
+                    | (DATA[aslot + 5] << 40)
+                    | (DATA[aslot + 6] << 48)
+                    | (DATA[aslot + 7] << 56);
+            }
+            let slot = 0x0002E000 + SP * 8;
+            if addr >= 0x00020000 && addr + 7 <= 0x0002FFFF then {
+                DATA[slot] = DATA[addr];
+                DATA[slot + 1] = DATA[addr + 1];
+                DATA[slot + 2] = DATA[addr + 2];
+                DATA[slot + 3] = DATA[addr + 3];
+                DATA[slot + 4] = DATA[addr + 4];
+                DATA[slot + 5] = DATA[addr + 5];
+                DATA[slot + 6] = DATA[addr + 6];
+                DATA[slot + 7] = DATA[addr + 7];
+            } else {
+                DATA[slot] = 0;
+                DATA[slot + 1] = 0;
+                DATA[slot + 2] = 0;
+                DATA[slot + 3] = 0;
+                DATA[slot + 4] = 0;
+                DATA[slot + 5] = 0;
+                DATA[slot + 6] = 0;
+                DATA[slot + 7] = 0;
+            }
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        instruction datastore = { 01010100 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let vslot = 0x0002E000 + SP * 8;
+                let value0 = DATA[vslot];
+                let value1 = DATA[vslot + 1];
+                let value2 = DATA[vslot + 2];
+                let value3 = DATA[vslot + 3];
+                let value4 = DATA[vslot + 4];
+                let value5 = DATA[vslot + 5];
+                let value6 = DATA[vslot + 6];
+                let value7 = DATA[vslot + 7];
+
+                SP = SP - 1;
+                let aslot = 0x0002E000 + SP * 8;
+                let addr = DATA[aslot]
+                    | (DATA[aslot + 1] << 8)
+                    | (DATA[aslot + 2] << 16)
+                    | (DATA[aslot + 3] << 24)
+                    | (DATA[aslot + 4] << 32)
+                    | (DATA[aslot + 5] << 40)
+                    | (DATA[aslot + 6] << 48)
+                    | (DATA[aslot + 7] << 56);
+
+                if addr >= 0x00020000 && addr + 7 <= 0x0002FFFF then {
+                    DATA[addr] = value0;
+                    DATA[addr + 1] = value1;
+                    DATA[addr + 2] = value2;
+                    DATA[addr + 3] = value3;
+                    DATA[addr + 4] = value4;
+                    DATA[addr + 5] = value5;
+                    DATA[addr + 6] = value6;
+                    DATA[addr + 7] = value7;
+                }
+            }
+            PC = PC + 1;
+        };
+
+        instruction dataloadbyte = { 01010101 } {
+            let addr = 0;
+            if SP > 0 then {
+                SP = SP - 1;
+                let aslot = 0x0002E000 + SP * 8;
+                addr = DATA[aslot]
+                    | (DATA[aslot + 1] << 8)
+                    | (DATA[aslot + 2] << 16)
+                    | (DATA[aslot + 3] << 24)
+                    | (DATA[aslot + 4] << 32)
+                    | (DATA[aslot + 5] << 40)
+                    | (DATA[aslot + 6] << 48)
+                    | (DATA[aslot + 7] << 56);
+            }
+            let slot = 0x0002E000 + SP * 8;
+            if addr >= 0x00020000 && addr <= 0x0002FFFF then {
+                DATA[slot] = DATA[addr];
+            } else {
+                DATA[slot] = 0;
+            }
+            DATA[slot + 1] = 0;
+            DATA[slot + 2] = 0;
+            DATA[slot + 3] = 0;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        instruction datastorebyte = { 01010110 } {
+            if SP > 1 then {
+                SP = SP - 1;
+                let vslot = 0x0002E000 + SP * 8;
+                let value = DATA[vslot];
+
+                SP = SP - 1;
+                let aslot = 0x0002E000 + SP * 8;
+                let addr = DATA[aslot]
+                    | (DATA[aslot + 1] << 8)
+                    | (DATA[aslot + 2] << 16)
+                    | (DATA[aslot + 3] << 24)
+                    | (DATA[aslot + 4] << 32)
+                    | (DATA[aslot + 5] << 40)
+                    | (DATA[aslot + 6] << 48)
+                    | (DATA[aslot + 7] << 56);
+
+                if addr >= 0x00020000 && addr <= 0x0002FFFF then {
+                    DATA[addr] = value;
+                }
+            }
+            PC = PC + 1;
+        };
+
+        // getsp — push current SP value onto operand stack
+        instruction getsp = { 01010111 } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot] = SP & 0xff;
+            DATA[slot + 1] = (SP >> 8) & 0xff;
+            DATA[slot + 2] = (SP >> 16) & 0xff;
+            DATA[slot + 3] = (SP >> 24) & 0xff;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        // setsp — pop value from operand stack, set SP to that value
+        instruction setsp = { 01011000 } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                SP = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24);
+            }
+            PC = PC + 1;
+        };
+
+        // getrp — push current RP value onto operand stack
+        instruction getrp = { 01011001 } {
+            let slot = 0x0002E000 + SP * 8;
+            DATA[slot] = RP & 0xff;
+            DATA[slot + 1] = (RP >> 8) & 0xff;
+            DATA[slot + 2] = (RP >> 16) & 0xff;
+            DATA[slot + 3] = (RP >> 24) & 0xff;
+            DATA[slot + 4] = 0;
+            DATA[slot + 5] = 0;
+            DATA[slot + 6] = 0;
+            DATA[slot + 7] = 0;
+            SP = SP + 1;
+            PC = PC + 1;
+        };
+
+        // setrp — pop value from operand stack, set RP to that value
+        instruction setrp = { 01011010 } {
+            if SP > 0 then {
+                SP = SP - 1;
+                let slot = 0x0002E000 + SP * 8;
+                RP = DATA[slot]
+                    | (DATA[slot + 1] << 8)
+                    | (DATA[slot + 2] << 16)
+                    | (DATA[slot + 3] << 24);
+            }
+            PC = PC + 1;
+        };
+
+        instruction hlt = { 11111111 } {
+            RUNNING = 0;
+            PC = PC + 1;
+        };
+
+    mnemonics:
+        mnemonic ldc(idx) "{1}";
+        mnemonic ldv(idx) "{1}";
+        mnemonic stv(idx) "{1}";
+
+        mnemonic add();
+        mnemonic sub();
+        mnemonic mul();
+        mnemonic div();
+        mnemonic mod();
+        mnemonic neg();
+
+        mnemonic lt();
+        mnemonic gt();
+        mnemonic le();
+        mnemonic ge();
+        mnemonic eq();
+        mnemonic ne();
+
+        mnemonic land();
+        mnemonic lor();
+        mnemonic lnot();
+
+        mnemonic jmp(addr) "{1}";
+        mnemonic jz(addr) "{1}";
+        mnemonic jnz(addr) "{1}";
+
+        mnemonic call(addr) "{1}";
+        mnemonic ret();
+
+        mnemonic print();
+        mnemonic input();
+        mnemonic out();
+        mnemonic in for inb();
+
+        mnemonic dload for dataload();
+        mnemonic dstore for datastore();
+        mnemonic dloadb for dataloadbyte();
+        mnemonic dstoreb for datastorebyte();
+
+        mnemonic getsp();
+        mnemonic setsp();
+        mnemonic getrp();
+        mnemonic setrp();
+
+        mnemonic pop();
+        mnemonic dup();
+
+        mnemonic inc(idx) "{1}";
+        mnemonic dec(idx) "{1}";
+
+        mnemonic hlt();
+}
