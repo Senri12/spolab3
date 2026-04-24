@@ -1,8 +1,5 @@
-// Minimal threading test: 2 threads output letters, main drives scheduler.
-// Expected output: "ABABABABABABABAB\n"
-//
-// Uses runtime rt_threads.asm explicitly (via -ExtraAsmFiles) for the
-// taskBody bridge required by funcAddr(taskBody).
+// Minimal threading test using GLOBAL memory (no local vars in threads).
+// Counters for A and B stored in memLoad/memStore slots, shared with main.
 
 void ctxInit();
 void ctxReset();
@@ -10,15 +7,22 @@ void ctxCreate(int func_addr, int arg);
 void ctxDispatch(int to_idx);
 void ctxYield();
 void ctxExit();
-int ctxCurrentTask();
 
 void pipeOut(int value);
 
 int memLoad(int addr);
 void memStore(int addr, int value);
 
+// TCB[i].status at 502000 + i*8 + 4
+// Compiler miscompiles `return memLoad(502000 + i*8 + 4)` — returns saved_fp + i.
+// Split into step-by-step assignments to force correct codegen.
 int taskStateOf(int i) {
-    return memLoad(502000 + i * 8 + 4);
+    int addr = 502000;
+    int off = 0;
+    off = i * 8;
+    addr = addr + off;
+    addr = addr + 4;
+    return memLoad(addr);
 }
 
 int finishedCount() {
@@ -28,23 +32,38 @@ int finishedCount() {
     return done;
 }
 
+// Counters at 770000 (A) and 770004 (B).
+// Compiler bug workaround: memStore(ADDR, memLoad(ADDR)+1) miscompiles because
+// both argument evaluations clobber r2. Split via local variable.
 void taskA(int dummy) {
-    int i = 0;
-    while (i < 8) {
+    int cnt = 0;
+    cnt = memLoad(770000);
+    while (cnt < 8) {
         pipeOut('A');
-        i = i + 1;
+        pipeOut('0' + cnt);
+        cnt = cnt + 1;
+        memStore(770000, cnt);
         ctxYield();
+        cnt = memLoad(770000);
     }
+    pipeOut('a');
+    pipeOut('X');
     ctxExit();
 }
 
 void taskB(int dummy) {
-    int i = 0;
-    while (i < 8) {
+    int cnt = 0;
+    cnt = memLoad(770004);
+    while (cnt < 8) {
         pipeOut('B');
-        i = i + 1;
+        pipeOut('0' + cnt);
+        cnt = cnt + 1;
+        memStore(770004, cnt);
         ctxYield();
+        cnt = memLoad(770004);
     }
+    pipeOut('b');
+    pipeOut('X');
     ctxExit();
 }
 
@@ -63,6 +82,9 @@ int main() {
 
     ctxInit();
     ctxReset();
+
+    memStore(770000, 0);
+    memStore(770004, 0);
 
     addr = funcAddr(taskBody);
     ctxCreate(addr, 0);
