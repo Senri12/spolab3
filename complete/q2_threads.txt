@@ -1,7 +1,26 @@
-// Variant 71, Task 2: 3-thread pipeline
-//   Thread 0 (typesParser): reads N_ТИПЫ_ВЕДОМОСТЕЙ from Input0 (ch0)
-//   Thread 1 (vedParser):   reads N_ВЕДОМОСТИ from Input1 (ch1), sends all triples
-//   Thread 2 (printer):     accumulates type IDs, filters/joins, outputs tvId;chlvkId
+// Variant 71, Task 2: 3-thread pipeline with passive (blocking) waits.
+//
+// Synchronisation model:
+//   - TCB[i].status: 0=free, 1=ready, 2=running, 3=done, 4=BLOCKED.
+//   - WAIT_REASON_BASE = 503000 (4 bytes per thread): why a BLOCKED thread waits.
+//   - reason encoding for the SPSC ring buffers:
+//        1 = waiting to read  qStream(0)
+//        2 = waiting to write qStream(0)
+//        3 = waiting to read  qStream(1)
+//        4 = waiting to write qStream(1)
+//
+// API in q2_threads:
+//   sync (blocks via ctxBlock/ctxWake):
+//        qStreamWrite(s, v)
+//        qStreamRead(s)              -> -1 on closed-empty
+//   async (returns immediately):
+//        qStreamWriteAsync(s, v)     -> 1 written, 0 would-block
+//        qStreamReadAsync(s)         -> value, -1 closed-empty, -2 would-block
+//   close (wakes all readers + writers waiting on the stream):
+//        qStreamClose(s)
+//
+// The scheduler in main() picks only READY (status==1) threads, so BLOCKED
+// threads truly sleep — there is no busy-yield in qStreamRead/Write.
 
 void ctxInit();
 void ctxReset();
@@ -10,6 +29,10 @@ void ctxDispatch(int to_idx);
 void ctxYield();
 void ctxExit();
 int ctxCurrentTask();
+
+void ctxBlock(int reason);
+void ctxWake(int reason);
+int ctxIsBlocked(int idx);
 
 int pipeIn0();
 int pipeIn1();
@@ -64,7 +87,7 @@ void printLabelValue(int value) {
 }
 
 // ============================================================
-// Software SPSC ring buffer (capacity 16) backed by memLoad/memStore.
+// SPSC ring buffer with passive blocking.
 //
 // Stream S layout (S in {0,1}):
 //   base = 810000 + S * 1024
@@ -73,6 +96,8 @@ void printLabelValue(int value) {
 //   tail          : base + 68
 //   count         : base + 72
 //   closed        : base + 76
+//
+// Wait reasons: read(0)=1, write(0)=2, read(1)=3, write(1)=4.
 // ============================================================
 
 int streamBase(int s) {
@@ -80,6 +105,20 @@ int streamBase(int s) {
         return 810000;
     }
     return 811024;
+}
+
+int streamReadReason(int s) {
+    if (s == 0) {
+        return 1;
+    }
+    return 3;
+}
+
+int streamWriteReason(int s) {
+    if (s == 0) {
+        return 2;
+    }
+    return 4;
 }
 
 void qStreamInit(int s) {
@@ -90,17 +129,25 @@ void qStreamInit(int s) {
     memStore(base + 76, 0);
 }
 
+// ----- Synchronous (blocking) write -----
 void qStreamWrite(int s, int value) {
     int base = 0;
     int count = 0;
     int tail = 0;
     int slot = 0;
+    int wReason = 0;
+    int rReason = 0;
+
     base = streamBase(s);
+    wReason = streamWriteReason(s);
+    rReason = streamReadReason(s);
+
     count = memLoad(base + 72);
     while (count >= 16) {
-        ctxYield();
+        ctxBlock(wReason);
         count = memLoad(base + 72);
     }
+
     tail = memLoad(base + 68);
     slot = tail * 4;
     slot = base + slot;
@@ -112,8 +159,12 @@ void qStreamWrite(int s, int value) {
     memStore(base + 68, tail);
     count = count + 1;
     memStore(base + 72, count);
+
+    // Producer hands off: wake any reader sleeping on this stream.
+    ctxWake(rReason);
 }
 
+// ----- Synchronous (blocking) read -----
 int qStreamRead(int s) {
     int base = 0;
     int count = 0;
@@ -121,16 +172,23 @@ int qStreamRead(int s) {
     int value = 0;
     int closed = 0;
     int slot = 0;
+    int wReason = 0;
+    int rReason = 0;
+
     base = streamBase(s);
+    wReason = streamWriteReason(s);
+    rReason = streamReadReason(s);
+
     count = memLoad(base + 72);
     while (count <= 0) {
         closed = memLoad(base + 76);
         if (closed != 0) {
             return -1;
         }
-        ctxYield();
+        ctxBlock(rReason);
         count = memLoad(base + 72);
     }
+
     head = memLoad(base + 64);
     slot = head * 4;
     slot = base + slot;
@@ -142,16 +200,100 @@ int qStreamRead(int s) {
     memStore(base + 64, head);
     count = count - 1;
     memStore(base + 72, count);
+
+    // Consumer drains a slot: wake any writer sleeping on this stream.
+    ctxWake(wReason);
+    return value;
+}
+
+// ----- Asynchronous variants (variant 71 spec demands both modes) -----
+
+// Returns 1 on success, 0 if the buffer is full (would block in sync mode).
+int qStreamWriteAsync(int s, int value) {
+    int base = 0;
+    int count = 0;
+    int tail = 0;
+    int slot = 0;
+    int rReason = 0;
+
+    base = streamBase(s);
+    rReason = streamReadReason(s);
+
+    count = memLoad(base + 72);
+    if (count >= 16) {
+        return 0;
+    }
+
+    tail = memLoad(base + 68);
+    slot = tail * 4;
+    slot = base + slot;
+    memStore(slot, value);
+    tail = tail + 1;
+    if (tail >= 16) {
+        tail = 0;
+    }
+    memStore(base + 68, tail);
+    count = count + 1;
+    memStore(base + 72, count);
+
+    ctxWake(rReason);
+    return 1;
+}
+
+// Returns the value, or -1 if closed-empty, or -2 if would block.
+int qStreamReadAsync(int s) {
+    int base = 0;
+    int count = 0;
+    int head = 0;
+    int value = 0;
+    int closed = 0;
+    int slot = 0;
+    int wReason = 0;
+
+    base = streamBase(s);
+    wReason = streamWriteReason(s);
+
+    count = memLoad(base + 72);
+    if (count <= 0) {
+        closed = memLoad(base + 76);
+        if (closed != 0) {
+            return -1;
+        }
+        return -2;
+    }
+
+    head = memLoad(base + 64);
+    slot = head * 4;
+    slot = base + slot;
+    value = memLoad(slot);
+    head = head + 1;
+    if (head >= 16) {
+        head = 0;
+    }
+    memStore(base + 64, head);
+    count = count - 1;
+    memStore(base + 72, count);
+
+    ctxWake(wReason);
     return value;
 }
 
 void qStreamClose(int s) {
+    int wReason = 0;
+    int rReason = 0;
+    wReason = streamWriteReason(s);
+    rReason = streamReadReason(s);
     memStore(streamBase(s) + 76, 1);
+    // Wake everybody waiting on this stream — readers will get -1, writers
+    // (none expected after close, but safe) will see closed and re-check.
+    ctxWake(rReason);
+    ctxWake(wReason);
 }
 
 // ============================================================
-// Thread completion helpers.
+// Thread completion / scheduling helpers.
 // TCB layout (rt_ctx.asm): TCB[i] at 502000 + i*8, status at +4.
+// status: 0=free 1=ready 2=running 3=done 4=blocked
 // ============================================================
 
 int tcbState(int i) {
@@ -175,6 +317,8 @@ int finishedCount() {
     return done;
 }
 
+// Returns the first thread index (0..2) whose TCB status is READY (1).
+// Skips DONE (3) and BLOCKED (4).  Returns -1 if no READY thread exists.
 int nextRunnable(int current) {
     int idx = 0;
     int tries = 0;
@@ -187,16 +331,14 @@ int nextRunnable(int current) {
     while (tries < 3) {
         tidx = idx + 1;
         st = tcbState(tidx);
-        if (st == 3) {
-            idx = idx + 1;
-            if (idx >= 3) {
-                idx = 0;
-            }
-            tries = tries + 1;
-        }
-        else {
+        if (st == 1) {
             return idx;
         }
+        idx = idx + 1;
+        if (idx >= 3) {
+            idx = 0;
+        }
+        tries = tries + 1;
     }
     return -1;
 }
@@ -318,8 +460,8 @@ int readIntField(int dev, int[] state) {
 }
 
 // ============================================================
-// Thread 0: reads N_ТИПЫ_ВЕДОМОСТЕЙ, sends typeId to qStream(0).
-// Types CSV: 3 data rows, format: ID;Name;...
+// Thread 0: typesParser — reads N_ТИПЫ_ВЕДОМОСТЕЙ, sends typeId to qStream(0).
+// Blocks naturally inside qStreamWrite if printer is slow.
 // ============================================================
 
 void typesParser(int dummy) {
@@ -336,7 +478,6 @@ void typesParser(int dummy) {
         skipLine(0, reader);
         qStreamWrite(0, typeId);
         rows = rows + 1;
-        ctxYield();
     }
 
     qStreamClose(0);
@@ -344,9 +485,10 @@ void typesParser(int dummy) {
 }
 
 // ============================================================
-// Thread 1: reads N_ВЕДОМОСТИ and sends (id, tvId, chlvkId)
-//           triples to qStream(1). Filtering is done by printer.
-// Ved CSV fields: id(1); chlvkId(2); f3; f4; f5; f6; f7; tvId(8); ...
+// Thread 1: vedParser — reads N_ВЕДОМОСТИ, ships (id, tvId, chlvkId)
+// triples to qStream(1).  Filtering happens in printer.
+// Triples are written one-by-one; the buffer holds 16 ints, so the
+// writer naturally blocks (BLOCKED state, not busy yield) when full.
 // ============================================================
 
 void vedParser(int dummy) {
@@ -371,12 +513,10 @@ void vedParser(int dummy) {
         tvId = readIntField(1, reader);
         skipLine(1, reader);
 
-        // Filter happens in printer: send all (id, tvId, chlvkId) triples.
         qStreamWrite(1, id);
         qStreamWrite(1, tvId);
         qStreamWrite(1, chlvkId);
         rows = rows + 1;
-        ctxYield();
     }
 
     qStreamClose(1);
@@ -385,9 +525,11 @@ void vedParser(int dummy) {
 
 // ============================================================
 // Thread 2: printer.
-//   Phase 1 — drain qStream(0): build type ID table in memory
-//             (at 760000: count, 760004+: id array).
-//   Phase 2 — drain qStream(1): output rows where tvId in type table.
+//   Phase 1 — drain qStream(0): build type ID table at 760000.
+//             Each qStreamRead either returns immediately (data ready)
+//             or blocks (status=BLOCKED, scheduler picks producer).
+//   Phase 2 — drain qStream(1): output rows where id > 1250981 and
+//             tvId is in the type table.
 // ============================================================
 
 void printer(int dummy) {
@@ -413,7 +555,6 @@ void printer(int dummy) {
         typesCount = typesCount + 1;
         memStore(760000, typesCount);
         typeId = qStreamRead(0);
-        ctxYield();
     }
 
     typesCount = memLoad(760000);
@@ -443,7 +584,6 @@ void printer(int dummy) {
         }
 
         id = qStreamRead(1);
-        ctxYield();
     }
 
     printLabelValue(count);
@@ -467,7 +607,10 @@ void taskBody(int stage) {
 }
 
 // ============================================================
-// main: init scheduler, create 3 threads, round-robin dispatch.
+// main: init scheduler, create 3 threads, dispatch only READY threads.
+// If nextRunnable returns -1 while finishedCount < 3, that is a real
+// deadlock (every task is BLOCKED with no producer/consumer to wake it).
+// We emit '!' and abort so the test harness sees the failure clearly.
 // ============================================================
 
 int main() {
@@ -492,6 +635,10 @@ int main() {
         current = nextRunnable(current);
         if (current >= 0) {
             ctxDispatch(current + 1);
+        }
+        else {
+            pipeOut('!');
+            return 1;
         }
         done = finishedCount();
     }

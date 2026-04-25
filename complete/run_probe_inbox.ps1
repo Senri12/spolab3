@@ -6,13 +6,13 @@ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $parserScript = Join-Path $projectRoot "tools\remote-parser.ps1"
 $assembleScript = Join-Path $projectRoot "tools\remotetasks-assemble.ps1"
 $runScript = Join-Path $projectRoot "tools\remotetasks-run.ps1"
-$inputFile = Join-Path $projectRoot "complete\q2_threads.txt"
-$asmOutput = Join-Path $projectRoot "build\task2_v71\q2_threads.asm"
-$parseTreeOutput = Join-Path $projectRoot "build\task2_v71\q2_threads.dgml"
-$binaryFile = Join-Path $projectRoot "build\task2_v71\q2_threads_inbox.ptptb"
+$inputFile = Join-Path $projectRoot "complete\probe_inbox_recv.txt"
+$asmOutput = Join-Path $projectRoot "build\task2_v71\probe_inbox_recv.asm"
+$parseTreeOutput = Join-Path $projectRoot "build\task2_v71\probe_inbox_recv.dgml"
+$binaryFile = Join-Path $projectRoot "build\task2_v71\probe_inbox_recv.ptptb"
 $definitionFile = Join-Path $projectRoot "src\TacVm13.target.pdsl"
-$devicesFile = Join-Path $projectRoot "complete\q2_threads.devices.xml"
-$resultFile = Join-Path $projectRoot "build\task2_v71\q2_threads_inbox.result.txt"
+$devicesFile = Join-Path $projectRoot "complete\probe_inbox_recv.devices.xml"
+$resultFile = Join-Path $projectRoot "build\task2_v71\probe_inbox.result.txt"
 $outputDir = Split-Path -Parent $binaryFile
 
 function Show-ResultFile {
@@ -38,7 +38,7 @@ function Show-ResultFile {
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 Set-Content -Encoding ASCII $resultFile ""
 
-Write-Host "Step 1/3: compiling threaded query..."
+Write-Host "Step 1/3: compiling inbox probe..."
 powershell -ExecutionPolicy Bypass -File $parserScript `
   -InputFile $inputFile `
   -AsmOutput $asmOutput `
@@ -47,11 +47,9 @@ if ($LASTEXITCODE -ne 0) {
   throw "Parser failed"
 }
 
-Write-Host "Step 2/3: building threaded binary..."
-$rtThreadsAsm = Join-Path $projectRoot "src\runtime\rt_threads.asm"
+Write-Host "Step 2/3: building inbox probe binary..."
 powershell -ExecutionPolicy Bypass -File $assembleScript `
   -AsmListing $asmOutput `
-  -ExtraAsmFiles $rtThreadsAsm `
   -DefinitionFile $definitionFile `
   -ArchName TacVm13 `
   -BinaryOutput $binaryFile `
@@ -60,7 +58,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "Assemble failed"
 }
 
-Write-Host "Step 3/3: running threaded binary with IO..."
+Write-Host "Step 3/3: running inbox probe with IO..."
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 powershell -ExecutionPolicy Bypass -File $runScript `
   -BinaryFile $binaryFile `

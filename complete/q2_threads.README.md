@@ -1,6 +1,31 @@
 # q2_threads — Вариант 71, Задание 2
 
-3-поточный pipeline на TacVm13 VM, выполняющий SQL-подобный запрос к двум CSV-файлам через software-каналы (SPSC ring buffers) и кооперативную многозадачность.
+3-поточный pipeline на TacVm13 VM, выполняющий SQL-подобный запрос к двум CSV-файлам через software-каналы (SPSC ring buffers) и **кооперативную многозадачность с пассивным ожиданием** (BLOCKED state, wait reasons, sync + async API).
+
+## Модель синхронизации
+
+Поток никогда не «крутится» в ожидании — он переходит в `BLOCKED` (status = 4) и сохраняет в parallel-массиве `WAIT_REASON_BASE = 503000` (4 байта на поток) причину сна. Когда другой поток выполняет `ctxWake(reason)`, все BLOCKED-потоки с совпадающим reason переводятся обратно в `READY` (1).
+
+Encoding wait reasons (см. [q2_threads.txt](q2_threads.txt) → `streamReadReason` / `streamWriteReason`):
+
+| Reason | Что ждёт |
+|--------|----------|
+| 1 | данные в qStream(0) (читатель) |
+| 2 | свободное место в qStream(0) (писатель) |
+| 3 | данные в qStream(1) (читатель) |
+| 4 | свободное место в qStream(1) (писатель) |
+
+Планировщик `nextRunnable()` выбирает только потоки в `READY` — `DONE` и `BLOCKED` пропускаются. Если ни одного `READY` нет, а `done < 3` — это deadlock, программа печатает `!` в Output и завершается с кодом 1.
+
+API в q2_threads:
+- **Sync (блокирующее):** `qStreamWrite(s, v)`, `qStreamRead(s) -> -1 при closed-empty`
+- **Async (вариант 71 spec):** `qStreamWriteAsync(s, v) -> 1 / 0`, `qStreamReadAsync(s) -> v / -1 closed / -2 would-block`
+- **Close:** `qStreamClose(s)` — помечает поток закрытым и будит **всех** ждущих читателей и писателей.
+
+Runtime-примитивы (rt_ctx.asm):
+- `ctxBlock(reason)` — сохраняет yield-frame, ставит TCB.status=4, сохраняет reason, переключается на планировщика.
+- `ctxWake(reason)` — итерирует TCBs 1..thread_count, переводит BLOCKED+matching → READY и обнуляет reason. Не переключает потоки.
+- `ctxIsBlocked(idx)` — диагностика.
 
 ## Запрос
 
@@ -190,7 +215,8 @@ $raw = [System.IO.File]::ReadAllBytes("build\task2_v71\q2_threads.result.txt")
 |---------|-----------|
 | 500000 | SCHED_STATE[0] = current_thread_idx |
 | 500004 | SCHED_STATE[1] = thread_count |
-| 502000-502031 | TCB array (4 × 8 байт): +0 saved_sp, +4 status (0 free, 1 ready, 2 running, 3 done) |
+| 502000-502031 | TCB array (4 × 8 байт): +0 saved_sp, +4 status (0 free, 1 ready, 2 running, 3 done, **4 blocked**) |
+| 503000-503015 | WAIT_REASON array (4 × 4 байт): причина BLOCKED-сна каждого потока |
 | 600000 | TCB[0] stack (scheduler) — не используется, но зарезервирован |
 | 602048-604095 | Thread 1 stack (typesParser) |
 | 604096-606143 | Thread 2 stack (vedParser) |
@@ -213,7 +239,7 @@ $raw = [System.IO.File]::ReadAllBytes("build\task2_v71\q2_threads.result.txt")
 - `pipe_out.asm` — blocking write to SimplePipe SyncSend
 - `pipe_typed.asm`, `pipe_block.asm` — альтернативные API (типизированные / блочные)
 - `timer.asm` — `initTimer`, `waitForTick` (для IRQ-based планирования, не используется)
-- `rt_ctx.asm` — **критичный**: `ctxInit`, `ctxCreate`, `ctxDispatch`, `ctxYield`, `ctxExit`
+- `rt_ctx.asm` — **критичный**: `ctxInit`, `ctxCreate`, `ctxDispatch`, `ctxYield`, `ctxExit`, `ctxBlock`, `ctxWake`, `ctxIsBlocked`
 
 Явно через `-ExtraAsmFiles`:
 - `rt_threads.asm` — `rtCreateThread`, `rtExitThread`, **мост `taskBody: jmp global_taskBody_1_int`**. Обязателен при использовании `funcAddr(taskBody)`.
@@ -227,10 +253,15 @@ $raw = [System.IO.File]::ReadAllBytes("build\task2_v71\q2_threads.result.txt")
 void ctxInit();               // init scheduler state
 void ctxReset();              // reset thread_count to 0
 void ctxCreate(int func_addr, int arg);   // allocate thread
-void ctxDispatch(int to_idx); // scheduler → thread, blocks until yield/exit
-void ctxYield();              // thread → scheduler
+void ctxDispatch(int to_idx); // scheduler → thread, blocks until yield/exit/block
+void ctxYield();              // thread → scheduler (status = READY)
 void ctxExit();               // thread done, never returns
 int ctxCurrentTask();         // returns current_thread_idx - 1
+
+// Passive blocking primitives (rt_ctx.asm)
+void ctxBlock(int reason);    // thread → scheduler (status = BLOCKED, reason saved)
+void ctxWake(int reason);     // wake all BLOCKED threads with matching reason
+int  ctxIsBlocked(int idx);   // diagnostic: 1 if TCB[idx].status == BLOCKED
 
 // SimplePipe I/O (pipe_in0.asm, pipe_in1.asm, pipe_out.asm)
 int pipeIn0();                // blocking read 4 bytes (packed LE) from Input0
@@ -247,16 +278,25 @@ int funcAddr(symbol);         // returns address of named function
 
 ## Использование в коде — паттерны
 
-### Software SPSC ring buffer
+### Software SPSC ring buffer + пассивная синхронизация
 
 Каждый поток имеет 16-слотовый буфер в фиксированной области памяти (810000 для stream 0, 811024 для stream 1). Для single-producer single-consumer нет гонок при кооперативном переключении — writer меняет только tail, reader только head.
 
 ```c
-qStreamInit(0);              // init buffer layout
-qStreamWrite(0, value);      // блокируется (yield) пока count >= 16
-int v = qStreamRead(0);      // блокируется (yield) пока count == 0 && !closed; вернёт -1 при закрытом пустом
-qStreamClose(0);             // пометить поток закрытым — новые Read вернут -1 когда выберут буфер
+qStreamInit(0);                 // init buffer layout
+
+// Sync (passive blocking):
+qStreamWrite(0, value);         // count==16 → ctxBlock(2); woken когда reader читает
+int v = qStreamRead(0);         // count==0 && !closed → ctxBlock(1); -1 при closed-empty
+
+// Async (returns immediately):
+int ok = qStreamWriteAsync(0, value);   // 1 written, 0 would-block
+int v  = qStreamReadAsync(0);           // value / -1 closed / -2 would-block
+
+qStreamClose(0);                // mark closed + ctxWake всех ждущих
 ```
+
+Производитель после успешной записи делает `ctxWake(readReason)` → если читатель был BLOCKED, его статус становится READY, и планировщик возьмёт его следующим. Симметрично читатель будит писателя через `ctxWake(writeReason)`.
 
 ### Создание потоков
 
@@ -297,6 +337,8 @@ while (done < 3) {
 6. **Все локальные переменные объявлять в начале функции** (C89-style) — mid-function декларации могут ломать стек.
 7. **VM медленная** — ~1000-2000 инструкций/сек. 50 строк = ~80 секунд. 200 строк ≈ 5-7 минут.
 8. **`out.asm` → raw `out` инструкция** не пишет в SimplePipe — нужен режим `InputFile` или другой механизм захвата. `pipeOut` пишет в SimplePipe SyncSend → файл.
+9. **Wait reasons должны быть >0** — значение 0 в WAIT_REASON_BASE интерпретируется как «не ждёт», поэтому `ctxBlock(0)` сделает поток BLOCKED-без-будильника (он никогда не проснётся, кроме как через `qStreamClose`). Все reason-коды в [q2_threads.txt](q2_threads.txt) начинаются с 1.
+10. **Каждый qStreamWrite/Read должен заканчиваться `ctxWake`** — иначе ждущая сторона никогда не проснётся. `qStreamClose` страхует, будя сразу обоих.
 
 ## Отладка
 

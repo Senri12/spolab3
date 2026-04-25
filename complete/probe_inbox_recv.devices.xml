@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VmDevicesConfiguration xmlns="Portable.TargetPlatform.Vm.Devices">
+  <DeviceType Name="SimplePipe" Id="3" />
+
+  <Device DeviceType="SimplePipe" Name="Input0" Id="10">
+    <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x30000" Length="0x0080" />
+    </IoPortMap>
+    <IoPortMap PortType="inbox" Id="2" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x34000" Length="0x0400" />
+    </IoPortMap>
+    <IoPortMap PortType="outbox" Id="3" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x35000" Length="0x0400" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:complete/data/probe_inbox_input.txt:out:build/task2_v71/probe_inbox.unused_0.out.txt" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+
+  <Device DeviceType="SimplePipe" Name="Output" Id="12">
+    <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="1000032" Length="80" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:complete/raw_pipe.empty.in:out:build/task2_v71/probe_inbox.result.txt" />
+    <Parameter Name="OperationMode" Value="ByteStream" />
+  </Device>
+</VmDevicesConfiguration>

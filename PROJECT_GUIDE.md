@@ -618,6 +618,11 @@ $raw = [System.IO.File]::ReadAllBytes("build\task2_v71\q2_threads.result.txt")
 - В этой модели главный ресурс — количество инструкций, а не реальные memory/device latencies.
 - `q2_mini`: около 2.2 секунды.
 - `q2_threads` на 50 строках: около 83 секунд.
+- `q2_threads` с mapped `inbox` block read на 1024 байта: 98.6 секунд, корректный вывод, но медленнее baseline.
+- `q2_threads` с mapped `inbox` block read на 256 байт: 127.9 секунд, корректный вывод, ещё медленнее.
+- `q2_threads` с mapped `inbox` block read на 2048 байт: 102.3 секунды, корректный вывод.
+- `q2_threads` с mapped `inbox` block read на 4096 байт: 101.4 секунды, корректный вывод.
+- `q2_threads` с mapped `inbox` block read на 1024 байта и 200 строк `q1.ved200.csv`: 374.4 секунды, корректный вывод `#29`.
 - `q1_raw200`: около 258 секунд.
 - `q1_block200`: около 293 секунд.
 - `q2_threads` на 200 строках ожидаемо может занимать несколько минут.

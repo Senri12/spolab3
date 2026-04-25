@@ -1,0 +1,116 @@
+// Minimal SimplePipe inbox-buffer probe for TacVm13.
+//
+// Device contract tested here:
+//   Input0 control base: 0x30000
+//   Input0 inbox RAM:    0x34000, length 0x0400
+//
+// The program asks SimplePipe to receive 32 bytes into inbox offset 0,
+// then reads RAM[0x34000 + i] by memLoad word unpacking and prints byte values.
+
+void pipeOut(int value);
+int memLoad(int addr);
+void memStore(int addr, int value);
+
+void printInt(int x) {
+    int div = 1;
+    int t = 0;
+    int digit = 0;
+
+    if (x < 0) {
+        pipeOut('-');
+        x = 0 - x;
+    }
+
+    if (x >= 10) {
+        t = x;
+        while (t >= 10) {
+            t = t / 10;
+            div = div * 10;
+        }
+        while (div > 0) {
+            digit = x / div;
+            pipeOut(digit + '0');
+            x = x - digit * div;
+            div = div / 10;
+        }
+    }
+    else {
+        pipeOut(x + '0');
+    }
+}
+
+void printLn() {
+    pipeOut('\n');
+}
+
+void printByteLine(int idx, int value) {
+    printInt(idx);
+    pipeOut(':');
+    printInt(value);
+    pipeOut(':');
+    pipeOut(value);
+    printLn();
+}
+
+int recvIntoInbox(int ctrl, int offset, int len) {
+    int addr = 0;
+    int busy = 0;
+    int got = 0;
+
+    addr = ctrl + 32;
+    memStore(addr, 0);      // SignalOnReceived = 0
+    addr = ctrl + 48;
+    memStore(addr, 0);      // Received = 0
+    addr = ctrl + 44;
+    memStore(addr, 0);      // ReceivedLength = 0
+    addr = ctrl + 16;
+    memStore(addr, offset); // InboxOffset
+    addr = ctrl + 20;
+    memStore(addr, len);    // InboxLength
+    addr = ctrl + 36;
+    memStore(addr, 0);      // AsyncReceiving = 0
+    addr = ctrl + 40;
+    memStore(addr, 1);      // Receiving = 1, start receive
+
+    busy = memLoad(addr);
+    while (busy != 0) {
+        busy = memLoad(addr);
+    }
+
+    addr = ctrl + 44;
+    got = memLoad(addr);
+    return got;
+}
+
+int main() {
+    int ctrl = 196608;      // 0x30000
+    int inbox = 212992;     // 0x34000
+    int got = 0;
+    int i = 0;
+    int addr = 0;
+    int b = 0;
+    int word = 0;
+    int rem = 0;
+
+    got = recvIntoInbox(ctrl, 0, 32);
+
+    pipeOut('N');
+    pipeOut('=');
+    printInt(got);
+    printLn();
+
+    while (i < got) {
+        if (rem == 0) {
+            addr = inbox + i;
+            word = memLoad(addr);
+            rem = 4;
+        }
+        b = word & 255;
+        word = word >> 8;
+        rem = rem - 1;
+        printByteLine(i, b);
+        i = i + 1;
+    }
+
+    return 0;
+}

@@ -6,6 +6,12 @@
     <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
       <InitialBinding StartAddress="196608" Length="128" />
     </IoPortMap>
+    <IoPortMap PortType="inbox" Id="2" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x34000" Length="0x0400" />
+    </IoPortMap>
+    <IoPortMap PortType="outbox" Id="3" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x35000" Length="0x0400" />
+    </IoPortMap>
     <Parameter Name="PipeSpec" Value="fifo:in:complete/data/q1.types200.csv:out:src/task2_v71/q2.threads.unused_0.out.txt" />
     <Parameter Name="OperationMode" Value="ByteStream" />
   </Device>
@@ -14,7 +20,13 @@
     <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
       <InitialBinding StartAddress="200704" Length="128" />
     </IoPortMap>
-    <Parameter Name="PipeSpec" Value="fifo:in:complete/data/q1.ved50.csv:out:src/task2_v71/q2.threads.unused_1.out.txt" />
+    <IoPortMap PortType="inbox" Id="2" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x36000" Length="0x0400" />
+    </IoPortMap>
+    <IoPortMap PortType="outbox" Id="3" BankName="ram" Mode="RAM">
+      <InitialBinding StartAddress="0x37000" Length="0x0400" />
+    </IoPortMap>
+    <Parameter Name="PipeSpec" Value="fifo:in:complete/data/q1.ved200.csv:out:src/task2_v71/q2.threads.unused_1.out.txt" />
     <Parameter Name="OperationMode" Value="ByteStream" />
   </Device>
 
@@ -22,7 +34,7 @@
     <IoPortMap PortType="control" Id="1" BankName="ram" Mode="RAM">
       <InitialBinding StartAddress="1000032" Length="80" />
     </IoPortMap>
-    <Parameter Name="PipeSpec" Value="fifo:in:src/task2_v71/raw_pipe.empty.in:out:build/task2_v71/q2_threads.result.txt" />
+    <Parameter Name="PipeSpec" Value="fifo:in:src/task2_v71/raw_pipe.empty.in:out:build/task2_v71/q2_threads_inbox.result.txt" />
     <Parameter Name="OperationMode" Value="ByteStream" />
   </Device>
 </VmDevicesConfiguration>

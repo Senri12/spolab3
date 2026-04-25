@@ -333,6 +333,177 @@ ctxYield:
     ret     ; → back inside ctxDispatch in the scheduler
 
 ; ──────────────────────────────────────────────────────────────────
+; void ctxBlock(int reason)
+; Task calls this to passively wait for an event identified by `reason`.
+; Sets TCB[current].status = BLOCKED (4) and writes `reason` into a
+; parallel array WAIT_REASON_BASE = 503000 (4 bytes per thread).
+; The thread is woken later by a ctxWake call with the same reason.
+;
+; Calling convention: caller does `push reason; call ctxBlock`.
+; After yield-frame is pushed, reason is at [sp+120].
+; ──────────────────────────────────────────────────────────────────
+ctxBlock:
+    push    r1
+    push    r2
+    push    r3
+    push    r4
+    push    r5
+    push    r6
+    push    r7
+    push    r8
+    push    r9
+    push    r10
+    push    r11
+    push    r12
+    push    r13
+    push    r14
+    push    r15
+    push    r16
+    push    r17
+    push    r18
+    push    r19
+    push    r20
+    push    r21
+    push    r22
+    push    r23
+    push    r24
+    push    r25
+    push    r26
+    push    r27
+    push    r28
+    push    fp
+    ; Stack: [sp+0]=fp ... [sp+112]=r1 [sp+116]=ret_addr [sp+120]=reason
+
+    mov     r1, #500000
+    mov     r2, [r1 + 0]        ; current_thread_idx
+
+    ; TCB[r2] at 502000 + r2*8
+    mov     r3, #8
+    mul     r3, r2, r3
+    add     r3, r3, #502000
+
+    ; Save sp, mark BLOCKED (4)
+    mov     [r3 + 0], sp
+    mov     [r3 + 4], #4
+
+    ; Save reason into WAIT_REASON_BASE + r2*4 (= 503000 + r2*4)
+    mov     r4, [sp + 120]      ; reason argument
+    mov     r5, #4
+    mul     r5, r2, r5
+    add     r5, r5, #503000
+    mov     [r5 + 0], r4
+
+    ; Switch to scheduler stack (TCB[0])
+    mov     r3, #502000
+    mov     sp, [r3 + 0]
+    mov     [r1 + 0], #0        ; current = 0
+
+    ; Restore scheduler context
+    pop     fp
+    pop     r28
+    pop     r27
+    pop     r26
+    pop     r25
+    pop     r24
+    pop     r23
+    pop     r22
+    pop     r21
+    pop     r20
+    pop     r19
+    pop     r18
+    pop     r17
+    pop     r16
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     r11
+    pop     r10
+    pop     r9
+    pop     r8
+    pop     r7
+    pop     r6
+    pop     r5
+    pop     r4
+    pop     r3
+    pop     r2
+    pop     r1
+    ret     ; → back inside ctxDispatch
+
+; ──────────────────────────────────────────────────────────────────
+; void ctxWake(int reason)
+; Iterate every task TCB (1..thread_count) and move any thread whose
+; status is BLOCKED (4) and wait_reason equals `reason` back to READY (1).
+; Wait reason slot is cleared.  Does not switch stacks — pure book-keeping.
+; ──────────────────────────────────────────────────────────────────
+ctxWake:
+    push    fp
+    mov     fp, sp
+    sub     sp, sp, #0
+    mov     r2, [fp + 8]        ; reason
+
+    mov     r3, #500000
+    mov     r4, [r3 + 4]        ; thread_count
+    mov     r5, #1              ; i = 1
+ctxWake_loop:
+    cmp     r5, r4
+    bgt     ctxWake_done
+
+    ; TCB[i] at 502000 + i*8
+    mov     r6, #8
+    mul     r6, r5, r6
+    add     r6, r6, #502000
+    mov     r7, [r6 + 4]        ; status
+    cmp     r7, #4
+    bne     ctxWake_next        ; not BLOCKED
+
+    ; reason slot = 503000 + i*4
+    mov     r8, #4
+    mul     r8, r5, r8
+    add     r8, r8, #503000
+    mov     r9, [r8 + 0]
+    cmp     r9, r2
+    bne     ctxWake_next
+
+    ; Wake: status = READY (1), wait_reason = 0
+    mov     [r6 + 4], #1
+    mov     [r8 + 0], #0
+
+ctxWake_next:
+    add     r5, r5, #1
+    jmp     ctxWake_loop
+ctxWake_done:
+    mov     r1, #0
+    add     sp, sp, #0
+    pop     fp
+    ret
+
+; ──────────────────────────────────────────────────────────────────
+; int ctxIsBlocked(int idx)
+; Returns 1 if TCB[idx].status == BLOCKED (4), 0 otherwise.
+; ──────────────────────────────────────────────────────────────────
+ctxIsBlocked:
+    push    fp
+    mov     fp, sp
+    sub     sp, sp, #0
+    mov     r2, [fp + 8]        ; idx
+
+    mov     r3, #8
+    mul     r3, r2, r3
+    add     r3, r3, #502000
+    mov     r4, [r3 + 4]        ; status
+    cmp     r4, #4
+    bne     ctxIsBlocked_no
+    mov     r1, #1
+    jmp     ctxIsBlocked_exit
+ctxIsBlocked_no:
+    mov     r1, #0
+ctxIsBlocked_exit:
+    add     sp, sp, #0
+    pop     fp
+    ret
+
+; ──────────────────────────────────────────────────────────────────
 ; void ctxExit()
 ; Task calls this when done.  Marks thread DONE, switches to scheduler.
 ; Does not return to the caller.
